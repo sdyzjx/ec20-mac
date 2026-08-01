@@ -1,7 +1,8 @@
-# Vohive Darwin modem.Manager 串口所有权与 mock 生命周期
+# Vohive Darwin modem.Manager 串口所有权与生命周期
 
 状态：`modem.Manager` 已在 `ec20d --mock` PTY 上完成启动、初始化、AT 命令、停止和 lease 释放的
-race 检测；尚未在真实 EC20 上启动完整 Manager/Worker。
+race 检测；真实 EC20 上也已通过 Vohive HTTP API 启动 Worker/Manager，完成 SIM READY、
+运营商、信号、注册和 PS attach 验证。短信、USSD、来电和 IP 数据面仍未验收。
 
 实现提交：`7753554`（`fix(darwin): make modem port ownership fail closed`）。
 验证日期：2026-08-01。
@@ -94,14 +95,17 @@ SIGTERM daemon，避免
 
 ## 5. 真实设备门禁
 
-本轮没有在实机启动 Manager，因为它不再是纯 metadata/read-only 实验：初始化序列会改变当前
-会话的 echo、短信格式/通知和来电/UAC 上报设置。进行真实测试前必须：
+2026-08-01 在明确授权后已执行实机 Manager 门禁。初始化序列会改变当前会话的
+echo、短信格式/通知和来电/UAC 上报设置，因此后续实机回归仍必须：
 
 1. 明确授权这些易恢复、但会改变运行状态的 AT 命令；
 2. 停止其他串口客户端并确认只有一个 Vohive/Manager；
 3. 保持 interface 4 和 `usbnet=0` 不变；
 4. 先限定单设备、只读查询和可控停止；
 5. 记录每条命令、响应、退出和 PTY 清理结果。
+
+已确认 Worker 健康启动、自动选网、LTE 漫游注册和 `AT+CGATT: 1`；实验证据见
+[真实 EC20 接入记录](experiment-vohive-real-2026-08-01.md)。
 
 接下来在已经成立的连续 reader/URC 注入门上分别验证 `+CMTI`、`+CUSD`、`RING/+CLIP` 和短信
 `>` prompt/Ctrl-Z transaction。一次 SIM 状态 URC 通过不能替代这些功能门禁。

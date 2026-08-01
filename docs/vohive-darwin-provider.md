@@ -1,7 +1,8 @@
 # Vohive Darwin HardwareProvider 与设备池接入
 
 状态：P3 bring-up 已接入 Vohive `CompatibleModem`、`Pool`、设备发现 API 和 Darwin 主程序工厂；
-尚未完成 Worker/Manager 实机运行、短信/USSD/来电等完整业务 URC 或蜂窝数据面。
+Worker/Manager 已完成实机 AT 控制面、SIM 和 LTE 注册验证，短信/USSD/来电等完整业务 URC
+与蜂窝 IP 数据面仍未完成。
 
 实现提交：
 
@@ -201,12 +202,13 @@ SOCKET_PATH="$SOCKET_DIR/ec20d.sock"
 - attachment key 与动态 `/dev/ttys*` 正确进入 Pool；
 - 没有打开 PTY，没有发送 AT，没有触碰 interface 4，也没有改变 `usbnet=0`。
 
-本轮没有在实机执行 `?with_imei=1`、`AddWorkerFromConfig` 或完整 Vohive HTTP 服务；这些路径只在
-mock PTY 上完成。mock/metadata 证据不能推导短信、通话、网络或热插拔已经可用。
+后续实机门禁已执行 `?with_imei=1`、`AddWorkerFromConfig` 和完整 Vohive HTTP 服务，
+并验证 LTE 注册与 PS attach。这仍不能推导短信、通话、IP 数据或热插拔已经可用；
+详见[真实 EC20 接入记录](experiment-vohive-real-2026-08-01.md)。
 
 ## 7. 尚未完成
 
-- Darwin Manager 的真实 EC20/Worker 生命周期与跨进程单实例 lease；
+- Darwin Manager 的跨进程单实例 lease，以及实机停止/重启/异常恢复；
 - 连续 USB reader、URC、来电、入短信、USSD、短信 prompt/Ctrl-Z transaction；
 - daemon restart/拔插 watcher 与不中断恢复；
 - ECM/MBIM controller、地址/DNS/路由观察与端到端代理出口；

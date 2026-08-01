@@ -116,9 +116,9 @@ npm run build
 
 ## 6. 仍然缺少的能力
 
-当前“前端可用”严格限定为 mock AT 控制面：
+当前“前端可用”已包含 mock 完整回归与真实 EC20 AT 控制面，但仍不包含未验收的业务与数据面：
 
-- 真实 EC20 尚未运行完整 Vohive Worker/Manager；
+- 真实 EC20 已运行 Vohive Worker/Manager，并验证身份、SIM、信号、运营商和注册；
 - 没有连续 USB reader、URC、短信 `>`/Ctrl-Z transaction、USSD 或来电流程；
 - `usbnet` 仍为 0，没有 ECM/MBIM/QMI session 或 `enX` 数据出口；
 - 代理、流量、VoWiFi 与通话功能没有 Darwin 实机证据；
