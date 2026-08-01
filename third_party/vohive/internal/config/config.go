@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -233,6 +234,7 @@ type WebConfig struct {
 }
 
 type ServerConfig struct {
+	Host  string `mapstructure:"host"`
 	Port  string `mapstructure:"port"`
 	Debug bool   `mapstructure:"debug"`
 }
@@ -415,6 +417,14 @@ func Load(path string) (*Config, error) {
 	// 兼容 server.port 格式 (例如: 7575 和 :7575)
 	if cfg.Server.Port != "" && !strings.Contains(cfg.Server.Port, ":") {
 		cfg.Server.Port = ":" + cfg.Server.Port
+	}
+	if host := strings.TrimSpace(cfg.Server.Host); host != "" {
+		port := strings.TrimPrefix(cfg.Server.Port, ":")
+		if port == "" || strings.Contains(port, ":") {
+			return nil, fmt.Errorf("server.host 只能与数字端口配合使用")
+		}
+		cfg.Server.Host = host
+		cfg.Server.Port = net.JoinHostPort(host, port)
 	}
 
 	return &cfg, nil

@@ -45,6 +45,21 @@ vowifi:
 	}
 }
 
+func TestLoadJoinsExplicitServerHostAndPort(t *testing.T) {
+	path := writeTempConfig(t, `
+server:
+  host: 127.0.0.1
+  port: 17575
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Server.Host != "127.0.0.1" || cfg.Server.Port != "127.0.0.1:17575" {
+		t.Fatalf("server = %#v, want localhost:17575", cfg.Server)
+	}
+}
+
 func TestLoadAcceptsLegacyVoWiFiGlobalKeys(t *testing.T) {
 	path := writeTempConfig(t, `
 vowifi:

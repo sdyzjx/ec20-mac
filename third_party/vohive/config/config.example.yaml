@@ -1,5 +1,7 @@
 server:
     debug: false
+    # 留空保持旧行为；macOS Host App 应设置为 127.0.0.1。
+    host: ""
     port: 7575
 
 web:
