@@ -171,6 +171,14 @@ Vohive 通过 Darwin 平台后端使用它们。
 - 使用 Apple 内置 ECM 时通常无需自有 NetworkingDriverKit entitlement；但不能假设所有目标
   macOS/固件组合都相同，支持范围须由实机矩阵决定。
 
+### 当前进度（2026-08-01）
+
+- 已把实机切换到 `usbnet=1`，interface 4 由 `AppleUserECM` 接管并创建动态 `enX`；
+- 已通过 IORegistry 将 ECM 接口与同一 `2c7c:0125` 模块和 AT attachment 关联；
+- 已验证绑定 ECM 接口的 IPv4 HTTPS 公网出口和不存在接口 fail-closed，系统默认路由未改变；
+- IPv6 绑定出口仍超时；20 次重连、10 次拔插/重启和恢复到 `usbnet=0` 的长稳验收尚未执行；
+- 详细证据见 [P2 ECM 实机记录](experiment-p2-ecm-2026-08-01.md)，因此 P2 仍为进行中。
+
 ## 6. P3：Vohive Darwin MVP
 
 ### 目标与交付物
@@ -203,9 +211,11 @@ Vohive 通过 Darwin 平台后端使用它们。
   UI 对 AT-only 设备明确禁用网络能力语义；
 - 已建立真实串口字节路径上的 mock-only URC 注入，并验证 `+CPIN: READY` 到达 Manager callback；
 - 已通过 Vohive API 的真实出站 PDU SMS 验收，并通过运营商回复完成真实入站长短信验收；
-  USSD、热插拔和 ECM 出口尚未通过，
-  因此 P3 仍为进行中，不能打
-  `p3-vohive-darwin-mvp` 标签。
+  USSD 在当前漫游网络返回超时，不能标为通过；
+- 已接入 Darwin ECM controller 和 ec20d snapshot watcher，并通过真实前端“重启模组”完成
+  detach、空 snapshot、新 generation/PTY、Worker 重建、LTE 漫游恢复和绑定 IPv4 出口闭环；
+- HTTP/SOCKS5 代理公网出口、IPv6、多次长稳、产品化应用入口和 Linux 全回归尚未通过，因此 P3
+  仍为进行中，不能打 `p3-vohive-darwin-mvp` 标签。
 
 ### 风险与回退
 

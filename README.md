@@ -5,16 +5,16 @@
 功能需要实现 QMI 与 `NetworkingDriverKit` 数据面。
 
 当前状态已进入 **P3 Vohive Darwin bring-up**：P1 的用户态 USB/PTY 桥仍是硬件基础；仓库已
-固定导入 Vohive 上游，并加入经过 socket peer 与 PTY 端点认证的 `ec20d` 只读发现客户端。
+固定导入 Vohive 上游，并加入经过 socket peer 与 PTY 端点认证的 `ec20d` 发现客户端。
 Vohive 使用的 `go.bug.st/serial` v1.6.4 已通过 mock 和 EC20 实机 `AT` 验证，Darwin provider
-现已接入 `CompatibleModem`、`Pool`、`/api/devices/discovered` 和 Darwin 后端入口，并在实机
-完成 metadata-only Pool 发现。完整 Vohive 后端可构建为 arm64/amd64 Mach-O，但它仍不是可安装
-的 `.app`/DriverKit 驱动。`modem.Manager` 已在合成 PTY 上通过 race 检测的完整生命周期，Darwin
-不会再使用 `fuser`/kill 抢占端口。完整嵌入式 Web 已跑通登录、发现、添加、状态收敛、AT 终端
-和删除流程，前端能明确显示 `AT / PTY` 与“仅 AT 控制面”。真实 EC20 Manager 已完成
-SIM、LTE 漫游注册和 Vohive API 出站 PDU SMS 验收；PTY 桥能处理 `AT+CMGS` prompt、十六进制
-PDU、Ctrl-Z 和最长 120 秒的网络响应。入站短信、USSD、通话以及 ECM/QMI 数据面仍未完成，
-模块当前仍为 `usbnet=0`。
+现已接入 `CompatibleModem`、`Pool`、`/api/devices/discovered`、Darwin 热插拔 watcher 和 ECM
+网络控制器。EC20 已受控切换到 `usbnet=1`，macOS 的 `AppleUserECM` 在 interface 4 创建 `en11`；
+Vohive 能把该接口与 interface 2 的 AT attachment 关联，并在模块重启后自动换用新的 PTY attachment。
+完整 Vohive 后端可构建为 arm64/amd64 Mach-O，但它仍不是可安装的 `.app`/DriverKit 驱动。
+完整嵌入式 Web 已跑通登录、发现、添加、状态收敛、AT 终端和删除流程；真实前端进一步完成 ECM
+设备详情和“重启模组”恢复验收。真实 EC20 Manager 已完成 SIM、LTE 漫游注册、Vohive API 出站
+PDU SMS 和运营商回复入站长短信验收。ECM 的绑定 IPv4 公网出口已通过，绑定 IPv6 尚未通过；
+USSD 在当前漫游网络返回超时，来电、代理公网出口和产品化串口仍需继续验收。
 
 设计与实施文档：
 
@@ -25,6 +25,7 @@ PDU、Ctrl-Z 和最长 120 秒的网络响应。入站短信、USSD、通话以�
 - [Vohive Darwin 真实 EC20 接入实验](docs/experiment-vohive-real-2026-08-01.md)
 - [首轮实机记录](docs/experiment-2026-08-01.md)
 - [P1 daemon/PTY 实机记录](docs/experiment-p1-2026-08-01.md)
+- [P2 ECM 与 Vohive 热插拔实机记录](docs/experiment-p2-ecm-2026-08-01.md)
 - [Vohive 上游固定、同步与许可证](docs/vohive-upstream.md)
 - [Vohive Darwin HardwareProvider 与 Pool 接入](docs/vohive-darwin-provider.md)
 - [Vohive Darwin 后端构建与依赖](docs/vohive-darwin-build.md)
@@ -67,7 +68,8 @@ attach 的 IORegistry ID，之后每条命令都按该 ID 重新匹配；模块�
 Vohive 的默认 discovery 只读取 metadata；显式请求 `?with_imei=1` 或启动已配置 AT 设备时会短暂
 发送只读 `AT`/`AT+CGSN`。该路径使用 attachment-scoped 缓存并串行化 cache miss，但尚未完成
 跨进程的强制独占。Darwin Manager、IMEI probe 和 `SerialAT` 已共用进程内 port lease；本轮只在
-mock PTY 启动完整 Manager/Worker 和 Web 流程，没有在实机启动 Worker。
+mock PTY 启动完整 Manager/Worker 和 Web 流程；实机 Worker、Web、ECM 关联和模块重启恢复也已
+通过一次端到端门禁。
 
 ## 使用 data 硬盘上的 Xcode 构建
 
@@ -131,8 +133,10 @@ SOCKET_PATH="${TMPDIR:-/tmp}/ec20d-live.sock"
 ```
 
 PTY 不会被 `GetPortsList` 自动枚举，也没有连续 USB reader。它已经为 `AT+CMGS=<length>` 提供
-有界的 prompt/PDU/Ctrl-Z 专用事务，足以让 Vohive 发送 PDU SMS；实时入站 URC、热插拔恢复和
-多客户端强制隔离仍属于后续切片。停止 `ec20d` 会移除 PTY，Vohive 不得持久化该动态路径。
+有界的 prompt/PDU/Ctrl-Z 专用事务，足以让 Vohive 发送 PDU SMS。`ec20d` 会在 detach 时发布空
+snapshot，并为 reattach 分配新的 generation 和 PTY；Darwin watcher 会触发 Vohive 重扫和 Worker
+重建。连续 USB reader 与跨进程多客户端强制隔离仍属于后续切片。停止 `ec20d` 会移除 PTY，
+Vohive 不得持久化该动态路径。
 
 如果一次交互式实验在 prompt 后被外部进程中止，可先停止所有串口客户端，再执行恢复命令；
 它只向 interface 2 发送 ESC，随后仍必须用普通 `AT` 收到 `OK` 才能确认恢复：
@@ -153,5 +157,5 @@ PTY 不会被 `GetPortsList` 自动枚举，也没有连续 USB reader。它已�
 - `AT+QCFG="usbnet"` 返回值：据此决定下一步是否做 ECM 切换实验。
 - 如果打开失败：先检查 macOS USB accessory 授权或是否出现了 interface owner；不要改成 seize。
 
-即使查到支持 ECM，本阶段也不会切换配置或重启模块。切换需要单独确认，并预先准备掉线后的
-恢复通道。
+当前实机已经在单独授权的 P2 实验中切换到 ECM。恢复、出口验证和已知限制见
+[P2 ECM 实机记录](docs/experiment-p2-ecm-2026-08-01.md)。

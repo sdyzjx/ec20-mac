@@ -1,13 +1,15 @@
 # Vohive Darwin HardwareProvider 与设备池接入
 
-状态：P3 bring-up 已接入 Vohive `CompatibleModem`、`Pool`、设备发现 API 和 Darwin 主程序工厂；
-Worker/Manager 已完成实机 AT 控制面、SIM、LTE 注册和出站 PDU SMS 验证，入站短信/
-USSD/来电等完整业务 URC 与蜂窝 IP 数据面仍未完成。
+状态：P3 bring-up 已接入 Vohive `CompatibleModem`、`Pool`、设备发现 API、Darwin 主程序工厂、
+snapshot hotplug watcher 和 ECM network controller；Worker/Manager 已完成实机 AT 控制面、SIM、
+LTE 注册、出站 PDU SMS、入站运营商长短信和 ECM IPv4 数据面验证。USSD 在当前漫游网络超时，
+来电、IPv6、代理出口与产品化串口仍未完成。
 
 实现提交：
 
 - `56b9761`：认证的 `ec20d` Go 协议客户端与只读 probe；
 - `fbd8d42`：Darwin `HardwareProvider`、Pool/API 接入、有限 deadline 和串口探测仲裁。
+- `5430926`：Darwin ECM snapshot、network controller 与 hotplug watcher。
 
 验证日期：2026-08-01。
 
@@ -92,8 +94,8 @@ type HardwareProvider interface {
 | PTY path | `ATPort` 与唯一 `ATPorts` 项 |
 | `2c7c:0125` | `VendorID` / `ProductID` |
 | PTY adapter | `DriverName=ec20d-pty` |
-| AT-only | `Mode=at`、`TransportType=at` |
-| interface 4 尚未接入 | `NetworkCapable=false`，`ControlPath`/`NetInterface` 为空 |
+| AT transport | `TransportType=at`，Manager 继续使用现有 AT backend |
+| ECM interface 4 | `Mode=ecm`、`NetworkCapable=true`、`NetInterface=enX` |
 
 纯映射不会打开 PTY、不会发送 AT，也不会伪造 `/dev/cdc-wdm*`、QMI control path 或 `enX`。
 
@@ -203,15 +205,16 @@ SOCKET_PATH="$SOCKET_DIR/ec20d.sock"
 - 没有打开 PTY，没有发送 AT，没有触碰 interface 4，也没有改变 `usbnet=0`。
 
 后续实机门禁已执行 `?with_imei=1`、`AddWorkerFromConfig` 和完整 Vohive HTTP 服务，
-并验证 LTE 注册、PS attach 和 Vohive API 出站 SMS。这仍不能推导入站短信、通话、IP 数据或热插拔已经可用；
+并验证 LTE 注册、PS attach、Vohive API 出站/入站 SMS、ECM IPv4 和模块重启热插拔恢复。这仍不能
+推导通话、IPv6、代理出口或多模块已经可用；
 详见[真实 EC20 接入记录](experiment-vohive-real-2026-08-01.md)。
 
 ## 7. 尚未完成
 
 - Darwin Manager 的跨进程单实例 lease，以及实机停止/重启/异常恢复；
 - 连续真实 USB reader、来电、入站短信与 USSD URC；
-- daemon restart/拔插 watcher 与不中断恢复；
-- ECM/MBIM controller、地址/DNS/路由观察与端到端代理出口；
+- daemon 自身重启、物理拔插长稳与睡眠唤醒；
+- ECM IPv6、DNS 泄漏门禁与端到端 HTTP/SOCKS5 代理出口；
 - interface 4 的 QMI transport、Raw-IP/Ethernet 数据面和 `NetworkingDriverKit`；
 - CoreAudio 语音路径及 VoWiFi/IPsec 的真实 Darwin 实现；
 - 更细的 SMS/USSD/eSIM/网络 capability 门禁、Host App、launchd、签名、公证与 DriverKit entitlement。
