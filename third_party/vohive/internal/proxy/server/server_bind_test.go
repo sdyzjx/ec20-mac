@@ -23,3 +23,16 @@ func TestBoundDialerDialsIPv6Loopback(t *testing.T) {
 	}
 	_ = conn.Close()
 }
+
+func TestBoundDialerFailsClosedForMissingInterface(t *testing.T) {
+	d := newBoundDialer("test", "vohive-test-missing-9f4e")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, err := d.DialContext(ctx, "tcp4", "127.0.0.1:9")
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if err == nil {
+		t.Fatal("dial through missing interface succeeded, want fail-closed error")
+	}
+}

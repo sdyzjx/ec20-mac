@@ -214,8 +214,10 @@ Vohive 通过 Darwin 平台后端使用它们。
   USSD 在当前漫游网络返回超时，不能标为通过；
 - 已接入 Darwin ECM controller 和 ec20d snapshot watcher，并通过真实前端“重启模组”完成
   detach、空 snapshot、新 generation/PTY、Worker 重建、LTE 漫游恢复和绑定 IPv4 出口闭环；
-- Darwin `go test ./...` 已全量通过；HTTP/SOCKS5 代理公网出口、IPv6、多次长稳、产品化应用入口
-  和 Linux CI 尚未通过，因此 P3
+- 真实 Web 已创建仅监听 loopback 的 HTTP/SOCKS5 实例；两种代理的固定公网 IPv4 请求均为 200，
+  `nettop` 证明 Vohive 公网子连接明确走 ECM `enX`；
+- Darwin `go test ./...` 已全量通过；代理 DNS 泄漏门禁、IPv6、多次长稳、浏览器直连部署入口和
+  Linux CI 尚未通过，因此 P3
   仍为进行中，不能打 `p3-vohive-darwin-mvp` 标签。
 
 ### 风险与回退

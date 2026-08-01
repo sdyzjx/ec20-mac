@@ -73,6 +73,22 @@ link 未运行、没有地址或绑定公网探测失败时返回错误，不会
 `ec20d` 会暂时保留一个不再发布的 retirement PTY，把旧名称钉住，直到新 attachment 已获得不同
 PTY 后再释放；Vohive 仍以 attachment key 和 generation 判定是否重建，而不以路径字符串为身份。
 
+## HTTP 与 SOCKS5 代理出口
+
+通过真实 Web 的“代理管理 → 本地出站代理”创建两个仅监听 loopback 的实例：SOCKS5 和 HTTP。
+两个实例都绑定同一 EC20 设备，并在页面显示运行中。固定公网 IPv4 目标的 HTTPS 请求分别通过
+两种代理返回 HTTP 200。
+
+为避免把“代理能返回 200”误判为蜂窝出口成立，验收期间同时采集 Vohive 进程连接：
+
+- 客户端到代理的连接为 `127.0.0.1` loopback；
+- Vohive 对公网目标的子连接源地址属于 ECM，interface 明确为 `en11`；
+- 系统默认路由仍指向原 VPN 接口，没有改写为 ECM；
+- 两个代理监听地址均为 `127.0.0.1`，未暴露到局域网。
+
+Darwin `netbind` 使用 `IP_BOUND_IF`/`IPV6_BOUND_IF`。代理层新增不存在接口的 fail-closed 回归，
+接口解析或 `setsockopt` 失败会让 `DialContext` 返回错误，不会使用系统默认路由重试。
+
 ## 自动测试证据
 
 - CMake build 通过；
@@ -100,7 +116,7 @@ Linux/Windows 或其他可靠 AT 恢复通道时自动切换 USB profile。
 当前未完成项：
 
 - ECM IPv6 出口；
-- Vohive HTTP/SOCKS5 代理真实公网出口和 DNS 泄漏门禁；
+- 代理域名解析策略与 DNS 泄漏门禁（固定 IP 的 HTTP/SOCKS5 出口已通过）；
 - 20 次重连、10 次重启/拔插以及睡眠唤醒；
 - 多模块并发；
 - 连续 USB reader 和产品化 `/dev/cu.*` 串口；
