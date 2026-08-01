@@ -279,7 +279,7 @@ export type DiscoveredDevice = {
   driver_name: string
   at_ports: string[]
   at_port: string
-  mode?: 'qmi' | 'mbim' | 'ecm' | 'rndis' | 'ncm' | 'unknown'
+  mode?: 'at' | 'qmi' | 'mbim' | 'ecm' | 'rndis' | 'ncm' | 'unknown'
   network_capable?: boolean
   configured: boolean
   configured_id?: string

@@ -1,0 +1,33 @@
+server:
+  debug: false
+  port: 17575
+
+web:
+  username: mock-admin
+  password: mock-password
+
+devices: []
+
+telegram:
+  enabled: false
+
+feishu:
+  enabled: false
+
+qq:
+  enabled: false
+
+webhook:
+  enabled: false
+
+bark:
+  enabled: false
+
+email:
+  enabled: false
+
+pushplus:
+  enabled: false
+
+vowifi:
+  enabled: false

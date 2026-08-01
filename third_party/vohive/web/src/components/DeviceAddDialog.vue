@@ -39,6 +39,7 @@ function isQmiDiscovery(d: DiscoveredDevice | null | undefined): boolean {
 
 function discoveryModeText(d: DiscoveredDevice | null | undefined): string {
   const mode = String(d?.mode || 'unknown').toLowerCase()
+  if (mode === 'at') return 'AT / PTY'
   if (mode === 'qmi') return 'QMI'
   if (mode === 'mbim') return 'MBIM'
   if (mode === 'ecm') return 'ECM'
@@ -50,6 +51,9 @@ function discoveryModeText(d: DiscoveredDevice | null | undefined): string {
 const isQMIBackendOnly = computed(() => isWwanQmiControlPath(props.addSelected?.control_path || props.addConfig?.control_device))
 const isMBIMBackendOnly = computed(
   () => String(props.addSelected?.mode || '').toLowerCase() === 'mbim'
+)
+const isATControlOnly = computed(
+  () => String(props.addSelected?.mode || '').toLowerCase() === 'at' && props.addSelected?.network_capable !== true
 )
 
 watch(
@@ -102,7 +106,7 @@ watch(
           @click="emit('select-device', d)"
         >
           <div class="font-bold text-gray-800 flex items-center gap-2">
-            <span>{{ d.net_interface || '--' }} · {{ d.driver_name || '--' }}</span>
+            <span>{{ d.net_interface || d.at_port || '--' }} · {{ d.driver_name || '--' }}</span>
             <el-tag size="small" :type="isQmiDiscovery(d) ? 'success' : 'warning'">{{ discoveryModeText(d) }}</el-tag>
           </div>
           <div class="text-xs text-gray-500 mt-0.5 truncate">
@@ -126,10 +130,14 @@ watch(
           <el-tag size="small" :type="isQmiDiscovery(addSelected) ? 'success' : 'warning'">{{ discoveryModeText(addSelected) }}</el-tag>
           <el-tag v-if="isQMIBackendOnly" size="small" type="success">仅 QMI 后端</el-tag>
           <el-tag v-if="isMBIMBackendOnly" size="small" type="success">仅 MBIM 后端</el-tag>
+          <el-tag v-if="isATControlOnly" size="small" type="warning">仅 AT 控制面</el-tag>
         </div>
       </div>
       <div v-if="isQMIBackendOnly" class="text-xs text-emerald-700">
         此类 WWAN QMI 设备运行后端固定为 QMI；AT 口仍会保留给 AT 终端。
+      </div>
+      <div v-if="isATControlOnly" class="text-xs text-amber-700">
+        当前只提供 AT 串口控制；蜂窝数据网卡尚不可用，网络、代理与 VoWiFi 功能会保持关闭。
       </div>
     </div>
 

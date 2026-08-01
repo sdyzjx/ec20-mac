@@ -15,3 +15,6 @@ xcuserdata/
 *.log
 *.pid
 *.sock
+
+# Browser automation snapshots
+.playwright-cli/

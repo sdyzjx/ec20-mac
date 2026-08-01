@@ -241,4 +241,14 @@ if(EC20_GO_EXECUTABLE)
             /bin/sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/vohive_darwin_provider_integration.sh"
     )
     set_tests_properties(vohive-darwin-provider-integration PROPERTIES TIMEOUT 60)
+
+    add_test(
+        NAME vohive-darwin-web-integration
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "EC20D_BIN=$<TARGET_FILE:ec20d>"
+            "GO_BIN=${EC20_GO_EXECUTABLE}"
+            "VOHIVE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/third_party/vohive"
+            /bin/sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/vohive_darwin_web_integration.sh"
+    )
+    set_tests_properties(vohive-darwin-web-integration PROPERTIES TIMEOUT 120)
 endif()

@@ -164,6 +164,38 @@ static BOOL IsReadOnlyATCommand(NSString *command)
     return [qcfgQuery firstMatchInString:upper options:0 range:entireCommand] != nil;
 }
 
+// Keep the synthetic PTY useful to clients that parse modem identity and
+// status, rather than only checking for a terminal OK. This responder is
+// reachable exclusively through --mock; real USB transactions continue to
+// use EC20USBATTransport below.
+static NSData *MockPTYResponseForCommand(NSString *command)
+{
+    NSString *upper = [command uppercaseString];
+    NSString *payload = nil;
+    if ([upper isEqualToString:@"ATI"]) {
+        payload = @"Quectel\r\nEC20F-MOCK\r\nRevision: MOCK-1";
+    } else if ([upper isEqualToString:@"AT+GMR"]) {
+        payload = @"MOCK-1";
+    } else if ([upper isEqualToString:@"AT+CGSN"]) {
+        payload = @"867530900000001";
+    } else if ([upper isEqualToString:@"AT+CSQ"]) {
+        payload = @"+CSQ: 20,99";
+    } else if ([upper isEqualToString:@"AT+CPIN?"]) {
+        payload = @"+CPIN: READY";
+    } else if ([upper isEqualToString:@"AT+COPS?"]) {
+        payload = @"+COPS: 0,0,\"EC20D MOCK\",7";
+    } else if ([upper isEqualToString:@"AT+QCFG=\"USBNET\""]) {
+        payload = @"+QCFG: \"usbnet\",0";
+    }
+
+    NSString *mockText = payload == nil
+        ? [NSString stringWithFormat:@"\r\n%@\r\r\nOK\r\n", command]
+        : [NSString stringWithFormat:@"\r\n%@\r\r\n%@\r\n\r\nOK\r\n",
+                                     command,
+                                     payload];
+    return [mockText dataUsingEncoding:NSASCIIStringEncoding];
+}
+
 static NSString *ATCommandPolicyFailure(NSString *command,
                                         BOOL allowArbitraryAT,
                                         BOOL *deniedByAllowlist)
@@ -523,9 +555,7 @@ static void RemoveSocketIfIdentityMatches(const char *path,
     }
 
     if (self.mock) {
-        NSString *mockText = [NSString stringWithFormat:@"\r\n%@\r\r\nOK\r\n",
-                                                        command];
-        return [mockText dataUsingEncoding:NSASCIIStringEncoding];
+        return MockPTYResponseForCommand(command);
     }
 
     NSError *openError = nil;
@@ -1405,12 +1435,20 @@ static BOOL RunSelfTests(NSError **error)
         return NO;
     }
 
-    NSData *mockResponse = [@"\r\nAT\r\r\nOK\r\n"
-        dataUsingEncoding:NSASCIIStringEncoding];
+    NSData *mockResponse = MockPTYResponseForCommand(@"AT");
+    NSData *mockIMEIResponse = MockPTYResponseForCommand(@"AT+CGSN");
     return SelfTestAssert(
+        mockResponse != nil &&
         [EC20USBATTransport terminalStateForResponseData:mockResponse] ==
-            EC20USBATTerminalOK,
-        @"The mock AT terminal response self-test failed.",
+            EC20USBATTerminalOK &&
+        mockIMEIResponse != nil &&
+        [EC20USBATTransport terminalStateForResponseData:mockIMEIResponse] ==
+            EC20USBATTerminalOK &&
+        [mockIMEIResponse rangeOfData:
+            [@"867530900000001" dataUsingEncoding:NSASCIIStringEncoding]
+                           options:0
+                             range:NSMakeRange(0, mockIMEIResponse.length)].location != NSNotFound,
+        @"The deterministic mock AT response self-test failed.",
         error);
 }
 
