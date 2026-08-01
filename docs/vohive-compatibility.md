@@ -312,6 +312,24 @@ Vohive 当前 Linux discovery 扫描 `/sys/bus/usb/devices`，watcher 使用 net
 - client 断开、租约超时、USB 拔出或 generation 改变时，服务端立即撤销租约；
 - `at.execute` 不得自动重试可能改变状态的命令。
 
+### 7.3 P1 `pty` 兼容模式
+
+- `ec20d --pty` 创建 mode `0600` 的动态 `/dev/ttys*`，设备对象设置
+  `at.transport="pty"`、`at.ownership="cooperative_single_client"`；
+- Vohive 必须从 `devices.list` 取得路径并显式打开，不能依赖 `GetPortsList`，也不能持久化该路径；
+- daemon 启动时记录目标 interface 2 的 IORegistry entry ID，之后每条命令按该 attach 身份重新
+  打开；模块拔出后旧 PTY 不得转接到同一物理 USB 端口上的新模块；
+- macOS PTY 允许同 UID 进程重复打开，P1 无法提供真实串口的系统级独占。Host App 必须保证只有
+  一个 Vohive 实例使用它；多开会产生混帧或响应被错误 reader 消费；
+- P1 每条命令临时打开、执行并关闭 USB interface 2，没有连续 reader，因此不能承诺实时 URC、
+  SMS prompt 或完整短信/USSD 状态机；
+- 默认只读 allowlist 仍在 PTY 写入 USB 前生效。`--allow-arbitrary-at` 仅供明确的开发实验，不能
+  作为成品应用获得短信、eSIM 或复位权限的授权模型；
+- `system.hello` 在此模式发布 `at.pty` 而不发布 `at.rpc`，RPC acquire 必须返回 busy。
+
+PTY 是把 Vohive 现有串口 transport 接到普通用户态 USB 实验的过渡层，不改变成品
+`USBSerialDriverKit` 串口需要满足的独占、热插拔和连续读语义。
+
 示例：
 
 ```json

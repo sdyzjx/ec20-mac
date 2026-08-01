@@ -1,4 +1,4 @@
-# P1 当前切片：`ec20d` 用户态服务与 mock IPC
+# P1 当前切片：`ec20d`、Unix Socket 与 PTY
 
 更新日期：2026-08-01
 
@@ -8,9 +8,12 @@
 它把 P0 已验证的 USB AT transport 放进一个长期运行的普通用户态进程，并提供版本化的本地
 Unix socket 接口和配套命令行客户端：
 
-- `ec20d`：在连接级 AT 租约期间拥有 EC20 interface 2，串行处理本地 IPC 请求；
+- `ec20d`：通过连接级 RPC 租约或 PTY handler 受控打开 EC20 interface 2；
 - `ec20ctl`：用于协议握手、列出设备和执行一条受策略限制的 AT 命令；
 - `--mock`：提供固定的虚拟 EC20，完整测试 IPC 和客户端但不枚举、打开或写入 USB；
+- `--pty`：创建权限为 `0600` 的动态 `/dev/ttys*`，让现有串口客户端通过实验桥访问 AT；
+- Vohive serial smoke：固定使用 `go.bug.st/serial` v1.6.4 验证 115200/8N1、75 ms read timeout
+  和基本 `AT`/`OK` 字节流；
 - NDJSON 协议 codec：校验 schema/API major、字段类型、单条消息大小和稳定错误码；
 - 默认只读 AT allowlist：危险命令在进入 USB transport 前拒绝。
 
@@ -22,10 +25,11 @@ interface 4，也不使用 capture/seize 抢占已有 owner。
 
 - URC 与当前命令响应分流或 `SubscribeURC`；
 - `devices.watch`、IOKit 热插拔通知、拔出后重连或 generation 事件；
-- PTY bridge；
+- PTY 的强制单客户端所有权；当前是 `cooperative_single_client`，同 UID 多开仍可能混帧；
 - 多客户端并发 accept、后台命令队列、租约超时和跨连接租约恢复；
 - 短信 `>` prompt、多阶段 payload、Ctrl-Z 结束符或二进制输入；
-- 面向生产的任意 AT 授权/审计、QMI、ECM 数据面或 Vohive Darwin backend；当前只有显式开发开关。
+- 面向生产的任意 AT 授权/审计、QMI、ECM 数据面或完整 Vohive Darwin backend；当前只验证了
+  Vohive 使用的 Go 串口库和 PTY 的基本兼容性。
 
 因此当前成品只能作为只读 AT/IPC 架构验证使用。Vohive 完整兼容仍按
 [产品路线图](roadmap.md)继续推进。
@@ -45,22 +49,46 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-CTest 当前包含协议、daemon/client 自测和 mock 端到端测试，共五项；所有自测都不访问 USB。
+当前环境检测到 Go，因此 CTest 共运行七项；它们全部是 self-test 或 `--mock` 集成，不访问 USB：
+
+| CTest | 覆盖内容 |
+|---|---|
+| `ec20-at-probe-self-test` | AT 终止行、响应边界和只读 policy |
+| `ec20-ipc-protocol-self-test` | NDJSON envelope、版本、大小限制和错误响应 |
+| `ec20d-self-test` | daemon policy、device object、PTY framing 与 capability |
+| `ec20ctl-self-test` | client framing、响应/事件校验和 AT 流程 |
+| `ec20d-mock-integration` | Unix socket 上的 hello/list/AT 及负向 policy |
+| `ec20d-pty-mock-integration` | mock PTY、POSIX raw termios 和独立 `OK` |
+| `ec20d-vohive-serial-integration` | `go.bug.st/serial` v1.6.4 通过 mock PTY 收发 AT |
+
+2026-08-01 的 fresh CMake configure/build 结果为
+`100% tests passed, 0 tests failed out of 7`。最后一项只在 CMake 找到 Go toolchain 时注册；
+缺少 Go 不会阻止 Objective-C 核心构建，但不能据此宣称 Vohive 串口兼容已通过。
 
 运行不接触硬件的端到端 mock 测试：
 
 ```sh
 ./tests/ec20d_mock_integration.sh
+./tests/ec20d_pty_integration.sh
+./tests/ec20d_vohive_serial_integration.sh
 ```
 
-脚本只启动 `ec20d --mock`，等待专用临时 socket，然后分别验证 `hello`、`list` 和 `at AT`
-均以退出码 0 完成。它不依赖 `jq`，临时目录和 daemon 在成功、失败或收到信号时都会清理。
+三个脚本都只启动 `ec20d --mock`：第一项验证 RPC hello/list/AT，第二项验证 POSIX PTY smoke，
+第三项通过固定版本的 Vohive 串口依赖验证相同 PTY。它们不依赖 `jq`，临时目录和 daemon 在
+成功、失败或收到信号时都会清理。
 如果构建产物不在默认 `build/`，可以覆盖：
 
 ```sh
 EC20D_BIN=/absolute/path/ec20d \
 EC20CTL_BIN=/absolute/path/ec20ctl \
 ./tests/ec20d_mock_integration.sh
+
+EC20D_BIN=/absolute/path/ec20d \
+EC20CTL_BIN=/absolute/path/ec20ctl \
+EC20_PTY_SMOKE_BIN=/absolute/path/ec20-pty-smoke \
+./tests/ec20d_pty_integration.sh
+
+GO_BIN=/absolute/path/go ./tests/ec20d_vohive_serial_integration.sh
 ```
 
 ## 3. 运行方式
@@ -86,7 +114,26 @@ SOCKET_PATH="${TMPDIR:-/tmp}/ec20d-demo.sock"
 mock 设备使用固定的 `instance_id` `usb-03120000-1`，`AT` 返回命令 echo 和独立的 `OK`
 终止行。mock 结果只证明 IPC、policy 和客户端路径成立，不能作为 USB 实机测试证据。
 
-### 3.2 实机只读模式
+PTY mock 模式会在 `devices.list` 的 `at.path` 发布动态路径，并把 AT RPC capability 切换为
+`at.pty`：
+
+```sh
+SOCKET_PATH="${TMPDIR:-/tmp}/ec20d-pty-demo.sock"
+./build/ec20d --mock --pty --socket "$SOCKET_PATH"
+./build/ec20ctl --socket "$SOCKET_PATH" list
+```
+
+从输出取得 `/dev/ttys*` 后，可以运行 Objective-C smoke，或运行与 Vohive 相同串口库的 Go
+smoke：
+
+```sh
+./build/ec20-pty-smoke /dev/ttysNNN AT
+
+cd tools/vohive-serial-smoke
+GOWORK=off go run -mod=readonly . /dev/ttysNNN AT
+```
+
+### 3.2 实机 RPC 只读模式
 
 确认没有运行 P0 探针、串口工具或另一份 daemon 后启动：
 
@@ -112,6 +159,34 @@ SOCKET_PATH="${TMPDIR:-/tmp}/ec20d-live.sock"
 完成 hello、list、acquire、`AT`、release，模块返回独立 `OK`，随后 daemon 达到请求上限自动
 退出并释放接口。该验证没有发送配置、复位、拨号或短信命令。
 
+### 3.3 实机 registry-pinned PTY 模式
+
+实机 PTY 必须明确选中启动时看到的 modem。当前设备 location ID 为 `0x03120000`：
+
+```sh
+SOCKET_PATH="$(mktemp -d "${TMPDIR:-/tmp}/ec20d-live-pty.XXXXXX")/ec20d.sock"
+./build/ec20d \
+  --pty \
+  --pty-location-id 0x03120000 \
+  --socket "$SOCKET_PATH"
+```
+
+daemon 在启动时同时记录匹配 USB service 的动态 registry ID；后续每条 PTY 命令都按这个
+registry ID 重新打开 interface 2，而不是只按 location ID 重选。若原模块被拔出、同一端口插入
+另一模块，新 service 的 registry ID 不同，命令会失败，不会误发给替换设备。registry ID 只在
+本次 attach 内有效，不能存入 Vohive 作为长期设备身份。
+
+用 `ec20ctl list` 取得当前 `/dev/ttys*` 后，实测以下命令退出 0：
+
+```sh
+cd tools/vohive-serial-smoke
+GOWORK=off go run -mod=readonly . /dev/ttysNNN AT
+```
+
+模块返回独立 `OK`，工具只打印 `vohive serial smoke: PASS`，不会打印响应正文。SIGTERM 后
+socket 和 PTY 都消失，随后 `./build/ec20-at-probe --list` 退出 0，证明 interface 2 已释放。
+完整证据见 [P1 实验记录](experiment-p1-2026-08-01.md)。
+
 ## 4. Unix socket 的权限边界
 
 未指定 `--socket` 时，服务使用当前用户临时目录中的 `ec20d.sock`；测试和多实例运行建议始终
@@ -123,6 +198,11 @@ SOCKET_PATH="${TMPDIR:-/tmp}/ec20d-live.sock"
 - daemon 不应以 root 运行；Vohive 和 `ec20ctl` 也不需要 root；
 - 协议单条记录最大 1 MiB；超过限制或无法形成完整 NDJSON 记录会关闭/拒绝该请求；
 - socket 只承载本地请求，不监听 TCP，也不提供远程访问。
+
+PTY slave 同样限制为当前用户所有、权限 `0600`，但这是文件访问控制，不是独占锁。多个同 UID
+进程仍可能同时打开同一路径并把字节写入同一个 stream。`devices.list` 因此明确报告
+`ownership="cooperative_single_client"`：当前必须由 Vohive/测试编排保证只有一个 client，不能
+把 `0600` 或一次成功的 `serial.Open` 理解成强制独占。
 
 `0600` 不能替代安全的父目录。自定义路径应放在仅当前用户可写的目录，不要把 socket 放进其他
 用户可替换文件的共享目录。生产应用还需基于 audit token/code signing identity 校验客户端；
@@ -170,6 +250,11 @@ major 会返回 `unsupported_api`。
 USB 命令不交错，但其他客户端要等待当前连接结束。后续仍需并发 accept、显式排队、租约超时和
 URC event；Vohive 不应把目前的串行 server 行为固化为长期 ABI。
 
+启用 `--pty` 后，`system.hello` 发布 `at.pty`，`devices.list` 返回 `at.transport="pty"`、动态
+`at.path` 和 `cooperative_single_client`；同一 daemon 的 RPC `at.acquire` 会返回 busy，避免
+RPC 和 PTY 两条上层通道同时控制 modem。PTY worker 只负责 CR/LF 命令 framing 和串行调用
+handler，无法识别两个同时打开 slave 的本地进程，所以上述 busy 规则不能解决 PTY 多开混帧。
+
 ## 6. 默认只读 AT 策略
 
 默认只允许以下精确命令：
@@ -198,41 +283,62 @@ AT+QCFG="<只含字母、数字、点、下划线或连字符的键>"
 但会放开持久配置和其他状态变更；它不能成为应用默认值。生产接口应为 USB 模式切换、短信发送
 等状态变更提供明确、可审计且带确认的高层方法。
 
-## 7. PTY 可行性实测
+PTY handler 使用同一 daemon policy。额外的 Objective-C/Go smoke 工具范围更窄，只接受 P0
+四条精确命令 `AT`、`ATI`、`AT+GMR`、`AT+QCFG="usbnet"`，没有放开开关。当前 mock 与实机
+PTY 验证都只发送了 `AT`。
 
-PTY bridge 尚未在本仓库实现，但已做过独立的最小兼容性实验：
+## 7. PTY 实现与验证
 
-- 环境：macOS 26.2 arm64、Go 1.26、`go.bug.st/serial` v1.6.4；
-- `serial.Open("/dev/ttys001", 115200)` 成功；
-- 双向传递 `AT`/`OK` 的字节保持一致；
-- `SetReadTimeout(75ms)` 成功；
-- 运行时切换 9600 和 230400 baud 成功。
+PTY bridge 已在本仓库实现。它使用 `openpty` 创建 raw slave，校验 slave 是当前用户拥有的字符
+设备并收紧为 `0600`；私有 worker 从 master 读取可打印 ASCII，以 CR/LF 组成命令，并把 handler
+返回的原始字节写回。单命令输入上限为 4096 bytes，停止时通过专用 pipe 唤醒 worker、等待线程
+退出，再关闭 master、slave anchor 和 pipe。
 
-这说明 Vohive 使用的 Go 串口库能够把 PTY slave 当作基本字节流，但同时观察到：
+验证分三层：
 
-- `GetPortsList` 不会枚举该 PTY，必须由 `ec20d` 把动态路径显式交给 Vohive；
-- 第二次 `Open` 仍可成功，不能依赖 PTY 自动提供真实串口的独占语义；
-- `SetDTR` 返回 `ENOTTY`，modem control line 语义不完整；
-- `/dev/ttys*` 路径是动态的，daemon 重启或重新创建 PTY 后会变化；
-- 本次只验证基本字节流，没有验证 AT echo/URC 分流、拔出、并发 client 和短信 prompt。
+1. `EC20PTYBridge` self-test 覆盖碎片输入、批量命令、非法/超长输入恢复和 stop；
+2. `ec20-pty-smoke` 通过 POSIX `open`、raw termios、poll 和 3 秒/64 KiB 边界验证独立 `OK`；
+3. `tools/vohive-serial-smoke` 固定 `go.bug.st/serial` v1.6.4，使用 115200/8N1 和 75 ms
+   read timeout，通过 mock PTY 与 registry-pinned 实机 PTY 完成 `AT`。
 
-所以 PTY 只能作为 P1 到 Vohive 的临时实验桥；产品版仍必须由 `USBSerialDriverKit` 提供真正的
-`/dev/cu.ec20-*-at`。
+实机结果为 `vohive serial smoke: PASS`、退出 0；模块返回独立 `OK`，Go 工具不输出响应正文。
+SIGTERM 后 socket/PTY 清理完成，P0 probe 能重新打开 interface 2。这个结果证明当前桥能承载
+Vohive 的基本串口字节流，但不等于完整 Vohive backend 已经接通。
+
+已知 PTY 限制：
+
+- `GetPortsList` 不会可靠枚举 PTY，Vohive 必须读取 `devices.list.at.path`；
+- `/dev/ttys*` 每次启动动态变化，不能作为持久设备 ID；
+- ownership 只是 `cooperative_single_client`；即使都是同 UID，两个 `Open`/writer 仍可能把字节
+  混入同一 stream，daemon 无法按 client 还原边界；
+- `SetDTR` 在可行性实验中返回 `ENOTTY`，PTY 不具备真实串口完整的 modem-control 语义；
+- PTY 上设置 baud rate 只满足串口 API，不改变 EC20 USB bulk transport 的实际速率。
+
+所以 PTY 仍是 P1 到 Vohive 的临时实验桥；产品版必须由 `USBSerialDriverKit` 提供真正的
+`/dev/cu.ec20-*-at`，或者让 Vohive Darwin backend 使用带明确所有权的 IPC transport。
 
 ## 8. 当前限制与下一步
 
-当前 daemon 对命令采用请求—完整响应模型。没有 URC dispatcher 时，不应运行会持续产生异步
-输出的业务；没有短信 prompt 状态机时，即使放宽 allowlist 也不能用 `AT+CMGS` 安全发送正文。
-没有 `devices.watch`/热插拔恢复时，模块拔出后应停止 daemon、重新插入再启动，不能假设旧
-instance、file descriptor 或 socket session 仍有效。
+当前 RPC 和 PTY 都采用请求—完整响应模型。PTY 为每条命令按启动时固定的 registry ID 打开
+interface 2，事务结束立即关闭 USB transport；这样能够阻止同一端口替换模块时的误操作，但
+没有常驻 reader，因此不能实时收取或订阅 URC。事务开始时发现的 stale input 只会并入本次 PTY
+响应，不是可靠的事件通道。
+
+停止 PTY 时会唤醒并 join worker；如果 worker 已进入同步 USB handler，stop 必须等待当前
+transport 返回。命令读取有固定 deadline、响应上限也限制内存，但 interface open 和整个同步
+handler 没有独立的取消/stop deadline，因此目前不能承诺 SIGTERM 等待严格有界。没有短信 prompt
+状态机时，即使使用开发开关也不能用 `AT+CMGS` 安全发送正文。没有 `devices.watch`/热插拔恢复
+时，固定 registry ID 只会让旧设备操作失败，不会自动发现新 generation 或重建 PTY。
 
 下一切片应按以下顺序推进：
 
-1. 并发 accept、显式命令队列、租约超时和公平调度；
-2. 响应和 URC 分流、订阅及断线 resync；
-3. IOKit watch、真实 generation 和拔出/重连；
-4. PTY bridge 与 Vohive 派生 Go 测试；
-5. 短信 prompt 和其他有状态 AT transaction 的专用 API。
+1. 为 PTY/RPC 建立同一套强制 owner、并发 accept、显式命令队列、租约超时和公平调度；
+2. 把 registry-pinned USB ownership 演进为可取消的常驻 transport，实现响应/URC 分流、订阅和
+   断线 resync；
+3. 增加 IOKit watch、真实 generation、拔出取消和受控重连，继续保证替换设备 fail closed；
+4. 为短信 prompt、Ctrl-Z payload 和其他有状态 AT transaction 提供专用 API；
+5. 把 `devices.list`/事件与串口路径接入 Vohive Darwin DeviceProvider，再开始 P2 ECM 门禁。
 
 本切片没有执行 `AT+QCFG="usbnet",1`，没有改变 `usbnet=0`，没有复位模块，也没有进行 ECM
-重新枚举或产生 `enX`。ECM 实验属于 P2；只有准备独立恢复通道并完成相应恢复文档后才能执行。
+重新枚举或产生 `enX`；所有实机命令只访问 configuration 1/interface 2，从未打开或写入
+interface 4。ECM 实验属于 P2；只有准备独立恢复通道并完成相应恢复文档后才能执行。
