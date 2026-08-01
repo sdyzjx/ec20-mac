@@ -157,6 +157,7 @@ static BOOL ConfigureRawSlave(int slaveFileDescriptor, NSError **error)
 @property(nonatomic) int stopWriteFileDescriptor;
 @property(nonatomic, copy) EC20PTYCommandHandler handler;
 @property(nonatomic, strong) NSCondition *exitCondition;
+@property(nonatomic, strong) NSLock *writeLock;
 @property(nonatomic) BOOL exited;
 
 - (instancetype)initWithMaster:(int)master
@@ -165,6 +166,7 @@ static BOOL ConfigureRawSlave(int slaveFileDescriptor, NSError **error)
                       stopWrite:(int)stopWrite
                         handler:(EC20PTYCommandHandler)handler;
 - (void)run;
+- (BOOL)writeResponse:(NSData *)response;
 - (void)requestStop;
 - (void)waitUntilExited;
 
@@ -186,48 +188,57 @@ static BOOL ConfigureRawSlave(int slaveFileDescriptor, NSError **error)
         _stopWriteFileDescriptor = stopWrite;
         _handler = [handler copy];
         _exitCondition = [[NSCondition alloc] init];
+        _writeLock = [[NSLock alloc] init];
     }
     return self;
 }
 
 - (BOOL)writeResponse:(NSData *)response
 {
-    const uint8_t *bytes = response.bytes;
-    NSUInteger offset = 0;
-    while (offset < response.length) {
-        ssize_t count = write(self.masterFileDescriptor,
-                              bytes + offset,
-                              response.length - offset);
-        if (count > 0) {
-            offset += (NSUInteger)count;
-            continue;
+    [self.writeLock lock];
+    @try {
+        if (self.masterFileDescriptor < 0) {
+            return NO;
         }
-        if (count < 0 && errno == EINTR) {
-            continue;
-        }
-        if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            struct pollfd descriptors[2] = {
-                { .fd = self.masterFileDescriptor, .events = POLLOUT },
-                { .fd = self.stopReadFileDescriptor, .events = POLLIN },
-            };
-            int pollResult;
-            do {
-                pollResult = poll(descriptors, 2, -1);
-            } while (pollResult < 0 && errno == EINTR);
-            if (pollResult <= 0 ||
-                (descriptors[1].revents &
-                    (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0 ||
-                (descriptors[0].revents & POLLNVAL) != 0) {
-                return NO;
+        const uint8_t *bytes = response.bytes;
+        NSUInteger offset = 0;
+        while (offset < response.length) {
+            ssize_t count = write(self.masterFileDescriptor,
+                                  bytes + offset,
+                                  response.length - offset);
+            if (count > 0) {
+                offset += (NSUInteger)count;
+                continue;
             }
-            continue;
+            if (count < 0 && errno == EINTR) {
+                continue;
+            }
+            if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                struct pollfd descriptors[2] = {
+                    { .fd = self.masterFileDescriptor, .events = POLLOUT },
+                    { .fd = self.stopReadFileDescriptor, .events = POLLIN },
+                };
+                int pollResult;
+                do {
+                    pollResult = poll(descriptors, 2, -1);
+                } while (pollResult < 0 && errno == EINTR);
+                if (pollResult <= 0 ||
+                    (descriptors[1].revents &
+                        (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0 ||
+                    (descriptors[0].revents & POLLNVAL) != 0) {
+                    return NO;
+                }
+                continue;
+            }
+            // EIO means the slave endpoint disappeared. It is not recoverable
+            // for this response, but the framing worker remains available for
+            // a later client because it keeps an owner-only slave anchor open.
+            return NO;
         }
-        // EIO means the slave endpoint disappeared. It is not recoverable for
-        // this response, but the framing worker remains available for a later
-        // client because it keeps an owner-only slave anchor open.
-        return NO;
+        return YES;
+    } @finally {
+        [self.writeLock unlock];
     }
-    return YES;
 }
 
 - (void)writeStandardError
@@ -293,6 +304,7 @@ static BOOL ConfigureRawSlave(int slaveFileDescriptor, NSError **error)
 
 - (void)closeOwnedDescriptors
 {
+    [self.writeLock lock];
     [self.exitCondition lock];
     CloseFileDescriptor(self.masterFileDescriptor);
     CloseFileDescriptor(self.slaveAnchorFileDescriptor);
@@ -305,6 +317,7 @@ static BOOL ConfigureRawSlave(int slaveFileDescriptor, NSError **error)
     self.exited = YES;
     [self.exitCondition broadcast];
     [self.exitCondition unlock];
+    [self.writeLock unlock];
 }
 
 - (void)run
@@ -522,6 +535,38 @@ static BOOL ConfigureRawSlave(int slaveFileDescriptor, NSError **error)
     return bridge;
 }
 
+- (BOOL)injectUnsolicitedData:(NSData *)data error:(NSError **)error
+{
+    static const NSUInteger maximumUnsolicitedBytes = 64 * 1024;
+    if (data.length == 0 || data.length > maximumUnsolicitedBytes) {
+        AssignError(error,
+                    BridgeError(EC20PTYBridgeErrorInvalidUnsolicitedData,
+                                @"Unsolicited PTY data must contain 1..65536 bytes.",
+                                0));
+        return NO;
+    }
+
+    EC20PTYBridgeWorker *worker;
+    @synchronized (self) {
+        worker = self.worker;
+    }
+    if (worker == nil) {
+        AssignError(error,
+                    BridgeError(EC20PTYBridgeErrorNotRunning,
+                                @"The PTY bridge is not running.",
+                                0));
+        return NO;
+    }
+    if (![worker writeResponse:data]) {
+        AssignError(error,
+                    BridgeError(EC20PTYBridgeErrorWriteFailed,
+                                @"Could not write unsolicited PTY data.",
+                                errno));
+        return NO;
+    }
+    return YES;
+}
+
 - (void)stop
 {
     EC20PTYBridgeWorker *worker;
@@ -682,6 +727,21 @@ static BOOL SelfTestFailure(NSString *message, NSError **error)
         return SelfTestFailure(@"Batched command framing self-test failed.", error);
     }
 
+    NSData *unsolicited = [@"\r\n+CUSD: 0,\"Mock balance\",15\r\n"
+        dataUsingEncoding:NSASCIIStringEncoding];
+    NSError *injectError = nil;
+    if (![bridge injectUnsolicitedData:unsolicited error:&injectError] ||
+        ![TestReadExactly(slave, unsolicited.length, 2.0)
+            isEqualToData:unsolicited]) {
+        CloseFileDescriptor(slave);
+        [bridge stop];
+        if (injectError != nil) {
+            AssignError(error, injectError);
+            return NO;
+        }
+        return SelfTestFailure(@"Unsolicited PTY write self-test failed.", error);
+    }
+
     NSMutableData *overflow = [NSMutableData dataWithLength:kMaximumCommandBytes + 1];
     memset(overflow.mutableBytes, 'A', overflow.length);
     const uint8_t recovery[] = "\rAT\r";
@@ -701,6 +761,9 @@ static BOOL SelfTestFailure(NSString *message, NSError **error)
     CloseFileDescriptor(slave);
     [bridge stop];
     [bridge stop];
+    if ([bridge injectUnsolicitedData:unsolicited error:NULL]) {
+        return SelfTestFailure(@"Stopped PTY accepted unsolicited data.", error);
+    }
     return YES;
 }
 

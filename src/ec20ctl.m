@@ -767,6 +767,31 @@ static BOOL RunList(EC20CTLClient *client, NSError **error)
     return WriteJSONResult(snapshot, error);
 }
 
+static BOOL RunMockURC(EC20CTLClient *client, NSString *line, NSError **error)
+{
+    id result = nil;
+    if (![client performMethod:EC20IPCMethodMockURCInject
+                        params:@{ @"line": line }
+                        result:&result
+                         error:error]) {
+        return NO;
+    }
+    NSDictionary<NSString *, id> *dictionary = nil;
+    if (!RequireDictionaryResult(result,
+                                 EC20IPCMethodMockURCInject,
+                                 &dictionary,
+                                 error) ||
+        !IsJSONBoolean(dictionary[@"injected"]) ||
+        ![dictionary[@"injected"] boolValue]) {
+        if (error != NULL && *error == nil) {
+            *error = ClientError(EC20CTLErrorInvalidResult,
+                                 @"mock.urc.inject did not confirm injection.");
+        }
+        return NO;
+    }
+    return WriteJSONResult(dictionary, error);
+}
+
 static BOOL ValidateHelloForAT(id result, NSError **error)
 {
     NSDictionary<NSString *, id> *hello = nil;
@@ -1286,6 +1311,7 @@ typedef NS_ENUM(NSInteger, EC20CTLCommand) {
     EC20CTLCommandHello,
     EC20CTLCommandList,
     EC20CTLCommandAT,
+    EC20CTLCommandMockURC,
     EC20CTLCommandSelfTest,
 };
 
@@ -1294,6 +1320,7 @@ typedef NS_ENUM(NSInteger, EC20CTLCommand) {
 @property(nonatomic) EC20CTLCommand command;
 @property(nonatomic, copy) NSString *socketPath;
 @property(nonatomic, copy, nullable) NSString *atCommand;
+@property(nonatomic, copy, nullable) NSString *mockURCLine;
 @property(nonatomic, copy, nullable) NSString *instanceIdentifier;
 
 @end
@@ -1310,6 +1337,7 @@ static void PrintUsage(FILE *stream)
             "  ec20ctl [--socket PATH] hello\n"
             "  ec20ctl [--socket PATH] list\n"
             "  ec20ctl [--socket PATH] at COMMAND [--instance INSTANCE_ID]\n"
+            "  ec20ctl [--socket PATH] mock-urc LINE\n"
             "  ec20ctl --self-test\n");
 }
 
@@ -1377,6 +1405,8 @@ static EC20CTLOptions *ParseOptions(int argumentCount,
         options.command = EC20CTLCommandList;
     } else if (strcmp(command, "at") == 0) {
         options.command = EC20CTLCommandAT;
+    } else if (strcmp(command, "mock-urc") == 0) {
+        options.command = EC20CTLCommandMockURC;
     } else {
         AssignError(error,
                     ClientError(EC20CTLErrorUsage,
@@ -1389,6 +1419,24 @@ static EC20CTLOptions *ParseOptions(int argumentCount,
             AssignError(error,
                         ClientError(EC20CTLErrorUsage,
                                     @"This command does not accept additional arguments."));
+            return nil;
+        }
+        return options;
+    }
+
+    if (options.command == EC20CTLCommandMockURC) {
+        if (index + 1 != argumentCount) {
+            AssignError(error,
+                        ClientError(EC20CTLErrorUsage,
+                                    @"mock-urc requires exactly one line."));
+            return nil;
+        }
+        options.mockURCLine = ArgumentString(arguments[index], error);
+        if (options.mockURCLine.length == 0) {
+            if (error != NULL && *error == nil) {
+                *error = ClientError(EC20CTLErrorUsage,
+                                     @"mock-urc requires a non-empty line.");
+            }
             return nil;
         }
         return options;
@@ -1478,6 +1526,9 @@ int main(int argumentCount, const char *arguments[])
                                   options.atCommand,
                                   options.instanceIdentifier,
                                   &error);
+                break;
+            case EC20CTLCommandMockURC:
+                succeeded = RunMockURC(client, options.mockURCLine, &error);
                 break;
             case EC20CTLCommandNone:
             case EC20CTLCommandSelfTest:

@@ -4,6 +4,7 @@ package modem
 
 import (
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"syscall"
@@ -54,6 +55,29 @@ func TestDarwinManagerEC20DMockPTYLifecycle(t *testing.T) {
 
 	if !manager.WaitReady(4 * time.Second) {
 		t.Fatal("Manager did not complete mock initialization")
+	}
+	urcStates := make(chan string, 1)
+	manager.SetSIMStatusHandler(func(_ *bool, state string) {
+		select {
+		case urcStates <- state:
+		default:
+		}
+	})
+	ec20ctlPath := os.Getenv("VOHIVE_EC20CTL_BIN")
+	socketPath := os.Getenv("VOHIVE_EC20D_MOCK_SOCKET")
+	if ec20ctlPath == "" || socketPath == "" {
+		t.Fatal("guarded mock URC injector environment is missing")
+	}
+	if output, err := exec.Command(ec20ctlPath, "--socket", socketPath, "mock-urc", "+CPIN: READY").CombinedOutput(); err != nil {
+		t.Fatalf("inject mock URC: %v (%s)", err, output)
+	}
+	select {
+	case state := <-urcStates:
+		if state != "READY" {
+			t.Fatalf("SIM URC state=%q, want READY", state)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Manager did not dispatch the injected SIM URC")
 	}
 	response, err := manager.ExecuteAT("AT", 2*time.Second)
 	if err != nil {

@@ -983,13 +983,19 @@ static void RemoveSocketIfIdentityMatches(const char *path,
     id result = nil;
 
     if ([request.method isEqualToString:EC20IPCMethodSystemHello]) {
+        NSArray<NSString *> *capabilities;
+        if (self.ptyBridge != nil && self.mock) {
+            capabilities = @[@"devices.list", @"at.pty", @"mock.urc.inject"];
+        } else if (self.ptyBridge != nil) {
+            capabilities = @[@"devices.list", @"at.pty"];
+        } else {
+            capabilities = @[@"devices.list", @"at.rpc"];
+        }
         result = @{
             @"server": @"ec20d",
             @"server_version": kEC20DServerVersion,
             @"daemon_instance_id": self.daemonInstanceID,
-            @"capabilities": self.ptyBridge != nil
-                ? @[@"devices.list", @"at.pty"]
-                : @[@"devices.list", @"at.rpc"],
+            @"capabilities": capabilities,
         };
     } else if ([request.method isEqualToString:EC20IPCMethodDevicesList]) {
         NSError *listError = nil;
@@ -1022,7 +1028,38 @@ static void RemoveSocketIfIdentityMatches(const char *path,
                               session:session
                             errorCode:&wireCode
                          errorMessage:&message
-                            retryable:&retryable];
+                           retryable:&retryable];
+    } else if ([request.method isEqualToString:EC20IPCMethodMockURCInject]) {
+        NSString *line = StringParameter(request.params, @"line");
+        NSData *lineData = [line dataUsingEncoding:NSASCIIStringEncoding];
+        BOOL validLine = lineData != nil && lineData.length == line.length &&
+            lineData.length > 0 && lineData.length <= 1024;
+        const uint8_t *bytes = lineData.bytes;
+        for (NSUInteger index = 0; validLine && index < lineData.length; index++) {
+            validLine = bytes[index] >= 0x20 && bytes[index] <= 0x7e;
+        }
+        if (!self.mock) {
+            wireCode = EC20IPCErrorCodePermissionDenied;
+            message = @"URC injection is available only in --mock mode.";
+        } else if (self.ptyBridge == nil) {
+            wireCode = EC20IPCErrorCodeNotReady;
+            message = @"URC injection requires --pty mode.";
+        } else if (!validLine) {
+            wireCode = EC20IPCErrorCodeInvalidRequest;
+            message = @"line must contain 1..1024 printable ASCII bytes.";
+        } else {
+            NSString *framed = [NSString stringWithFormat:@"\r\n%@\r\n", line];
+            NSError *injectError = nil;
+            if (![self.ptyBridge injectUnsolicitedData:
+                    [framed dataUsingEncoding:NSASCIIStringEncoding]
+                                                 error:&injectError]) {
+                wireCode = EC20IPCErrorCodeTransportError;
+                message = @"Could not inject the mock URC.";
+                retryable = YES;
+            } else {
+                result = @{ @"injected": @YES };
+            }
+        }
     } else {
         wireCode = EC20IPCErrorCodeInvalidRequest;
         message = @"The requested method is not implemented by this ec20d release.";

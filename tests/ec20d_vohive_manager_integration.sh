@@ -106,6 +106,8 @@ if (
     cd "$VOHIVE_DIR"
     VOHIVE_EC20D_MOCK_ONLY=ec20d-mock-no-usb \
     VOHIVE_EC20D_MOCK_PTY="$PTY_PATH" \
+    VOHIVE_EC20D_MOCK_SOCKET="$SOCKET_PATH" \
+    VOHIVE_EC20CTL_BIN="$EC20CTL_BIN" \
     GOWORK=off "$GO_BIN" test -race -count=1 \
         -run '^TestDarwinManagerEC20DMockPTYLifecycle$' \
         ./internal/modem

@@ -8,6 +8,9 @@ typedef NS_ERROR_ENUM(EC20PTYBridgeErrorDomain, EC20PTYBridgeErrorCode) {
     EC20PTYBridgeErrorInvalidHandler = 1,
     EC20PTYBridgeErrorPTYCreation,
     EC20PTYBridgeErrorPTYConfiguration,
+    EC20PTYBridgeErrorInvalidUnsolicitedData,
+    EC20PTYBridgeErrorNotRunning,
+    EC20PTYBridgeErrorWriteFailed,
     EC20PTYBridgeErrorSelfTest,
 };
 
@@ -30,6 +33,11 @@ typedef NSData * _Nullable (^EC20PTYCommandHandler)(NSString *command);
 /// Creates a raw, owner-only PTY and starts its worker before returning.
 + (nullable instancetype)startWithCommandHandler:(EC20PTYCommandHandler)handler
                                            error:(NSError **)error;
+
+/// Writes one already-framed unsolicited modem record to the PTY. This is
+/// used by deterministic mock tests; callers must include CR/LF framing.
+/// Command responses and unsolicited writes are serialized byte-for-byte.
+- (BOOL)injectUnsolicitedData:(NSData *)data error:(NSError **)error;
 
 /// Wakes the worker, waits for it to finish, and closes every PTY/pipe fd.
 /// Calling stop more than once is safe.
