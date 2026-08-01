@@ -4,10 +4,11 @@
 普通用户态 `IOUSBHost` 服务验证 AT 与 ECM，再用 `USBSerialDriverKit` 提供正式串口，最终按
 功能需要实现 QMI 与 `NetworkingDriverKit` 数据面。
 
-当前状态是 **P1 用户态桥接切片**：P0 探针仍保留，新增了可复用 USB AT transport、版本化
-Unix socket daemon `ec20d`、客户端 `ec20ctl`，以及把 interface 2 暴露为动态 `/dev/ttys*`
-的实验 PTY。Vohive 使用的 `go.bug.st/serial` v1.6.4 已通过 mock 和 EC20 实机 `AT` 验证。
-它尚不是可安装驱动，也没有修改模块 USB 模式。
+当前状态已进入 **P3 Vohive Darwin bring-up**：P1 的用户态 USB/PTY 桥仍是硬件基础；仓库已
+固定导入 Vohive 上游，并加入经过 socket peer 与 PTY 端点认证的 `ec20d` 只读发现客户端。
+Vohive 使用的 `go.bug.st/serial` v1.6.4 已通过 mock 和 EC20 实机 `AT` 验证，Darwin provider
+也已在实机完成纯 metadata 发现。它尚未接入 Vohive `Pool`/业务后端，不是可安装驱动，也没有
+修改模块 USB 模式。
 
 设计与实施文档：
 
@@ -17,6 +18,8 @@ Unix socket daemon `ec20d`、客户端 `ec20ctl`，以及把 interface 2 暴露�
 - [P1 ec20d 使用、协议与限制](docs/p1-ec20d.md)
 - [首轮实机记录](docs/experiment-2026-08-01.md)
 - [P1 daemon/PTY 实机记录](docs/experiment-p1-2026-08-01.md)
+- [Vohive 上游固定、同步与许可证](docs/vohive-upstream.md)
+- [Vohive Darwin provider 首版](docs/vohive-darwin-provider.md)
 
 ## 当前阶段：用户态 AT 与 PTY 桥
 
