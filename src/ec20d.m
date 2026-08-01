@@ -3,6 +3,7 @@
 #import "EC20IPCProtocol.h"
 #import "EC20PTYBridge.h"
 #import "EC20USBATTransport.h"
+#import "EC20USBNetwork.h"
 
 #import <IOKit/IOReturn.h>
 
@@ -17,7 +18,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-static NSString * const kEC20DServerVersion = @"0.1.0";
+static NSString * const kEC20DServerVersion = @"0.2.0";
 static const NSUInteger kATMaximumCommandBytes = 4096;
 static const NSUInteger kATTransportMaximumResponseBytes = 64 * 1024;
 static const NSUInteger kATTransportTimeoutMilliseconds = 3000;
@@ -320,16 +321,44 @@ static NSString *TerminalStateName(EC20USBATTerminalState state)
     return @"pending";
 }
 
+static NSDictionary<NSString *, id> *NetworkObject(EC20USBNetworkState *state)
+{
+    if (state == nil) {
+        return @{
+            @"mode": @"unknown",
+            @"data_plane": [NSNull null],
+            @"control_plane": @"at",
+            @"interface_name": [NSNull null],
+            @"interface_index": [NSNull null],
+            @"link_state": @"unknown",
+            @"addresses": @[],
+            @"managed_by": [NSNull null],
+        };
+    }
+    return @{
+        @"mode": @"ecm",
+        @"data_plane": @"ethernet",
+        @"control_plane": @"at",
+        @"interface_name": state.interfaceName,
+        @"interface_index": @(state.interfaceIndex),
+        @"link_state": state.isLinkActive ? @"active" : @"inactive",
+        @"addresses": state.addresses,
+        @"managed_by": @"macos.apple_user_ecm",
+    };
+}
+
 static NSDictionary<NSString *, id> *DeviceObject(uint32_t locationID,
                                                    uint64_t registryID,
+                                                   uint64_t generation,
                                                    BOOL mock,
-                                                   NSString *ptyPath)
+                                                   NSString *ptyPath,
+                                                   EC20USBNetworkState *networkState)
 {
     NSString *instanceID = InstanceIdentifierForLocation(locationID);
     NSString *location = [NSString stringWithFormat:@"%08x", locationID];
     return @{
         @"instance_id": instanceID,
-        @"generation": @1,
+        @"generation": @(generation),
         @"stable_id": [NSNull null],
         @"identity": @{
             @"imei": [NSNull null],
@@ -365,19 +394,10 @@ static NSDictionary<NSString *, id> *DeviceObject(uint32_t locationID,
                 : @"exclusive_client",
             @"available": @YES,
         },
-        @"network": @{
-            @"mode": @"unknown",
-            @"data_plane": [NSNull null],
-            @"control_plane": @"at",
-            @"interface_name": [NSNull null],
-            @"interface_index": [NSNull null],
-            @"link_state": @"unknown",
-            @"addresses": @[],
-            @"managed_by": [NSNull null],
-        },
-        @"capabilities": @[
-            @"management.at",
-        ],
+        @"network": NetworkObject(networkState),
+        @"capabilities": networkState == nil
+            ? @[@"management.at"]
+            : @[@"management.at", @"network.ecm"],
     };
 }
 
@@ -489,8 +509,13 @@ static NSString *TransportWireCode(NSError *error, BOOL opening)
 @property(nonatomic) BOOL ptyEnabled;
 @property(nonatomic, strong, nullable) NSNumber *ptyLocationID;
 @property(nonatomic, strong, nullable) EC20PTYBridge *ptyBridge;
+@property(nonatomic, strong, nullable) EC20PTYBridge *retiredPTYBridge;
 @property(nonatomic) uint32_t selectedPTYLocationID;
 @property(nonatomic) uint64_t selectedPTYRegistryID;
+@property(nonatomic) uint64_t selectedPTYGeneration;
+@property(nonatomic) BOOL selectedPTYWasRemoved;
+@property(nonatomic) uint64_t snapshotRevision;
+@property(nonatomic, copy, nullable) NSData *lastSnapshotSignature;
 @property(nonatomic) uint64_t maximumRequests;
 @property(nonatomic) uint64_t requestCount;
 @property(nonatomic, copy) NSString *daemonInstanceID;
@@ -563,15 +588,37 @@ static void RemoveSocketIfIdentityMatches(const char *path,
     if (self.mock) {
         return @[DeviceObject(0x03120000,
                               0,
+                              1,
                               YES,
-                              self.ptyBridge.slavePath)];
+                              self.ptyBridge.slavePath,
+                              nil)];
+    }
+
+    if (self.ptyEnabled && ![self refreshPTYAttachmentWithError:error]) {
+        return nil;
+    }
+
+    NSError *networkError = nil;
+    NSDictionary<NSNumber *, EC20USBNetworkState *> *networkStates =
+        [EC20USBNetwork enumerateECMInterfacesWithError:&networkError];
+    if (networkStates == nil) {
+        if (error != NULL) {
+            *error = networkError;
+        }
+        return nil;
+    }
+
+    if (self.ptyEnabled && self.ptyBridge == nil) {
+        return @[];
     }
 
     if (self.ptyBridge != nil) {
         return @[DeviceObject(self.selectedPTYLocationID,
                               self.selectedPTYRegistryID,
+                              self.selectedPTYGeneration,
                               NO,
-                              self.ptyBridge.slavePath)];
+                              self.ptyBridge.slavePath,
+                              networkStates[@(self.selectedPTYLocationID)])];
     }
 
     NSArray<EC20USBATDevice *> *devices = [self transportDevicesWithError:error];
@@ -599,10 +646,43 @@ static void RemoveSocketIfIdentityMatches(const char *path,
     for (EC20USBATDevice *device in devices) {
         [objects addObject:DeviceObject(device.locationID,
                                         device.registryID,
+                                        1,
                                         NO,
-                                        nil)];
+                                        nil,
+                                        networkStates[@(device.locationID)])];
     }
     return objects;
+}
+
+- (NSDictionary<NSString *, id> *)snapshotWithError:(NSError **)error
+{
+    NSArray<NSDictionary<NSString *, id> *> *devices =
+        [self deviceObjectsWithError:error];
+    if (devices == nil) {
+        return nil;
+    }
+    NSError *serializationError = nil;
+    NSData *signature = [NSJSONSerialization dataWithJSONObject:devices
+                                                        options:NSJSONWritingSortedKeys
+                                                          error:&serializationError];
+    if (signature == nil) {
+        if (error != NULL) {
+            *error = serializationError;
+        }
+        return nil;
+    }
+    if (self.lastSnapshotSignature == nil ||
+        ![self.lastSnapshotSignature isEqualToData:signature]) {
+        self.snapshotRevision++;
+        if (self.snapshotRevision == 0) {
+            self.snapshotRevision = 1;
+        }
+        self.lastSnapshotSignature = signature;
+    }
+    return @{
+        @"revision": @(self.snapshotRevision),
+        @"devices": devices,
+    };
 }
 
 - (EC20USBATDevice *)deviceMatchingInstanceID:(NSString *)instanceID
@@ -621,6 +701,7 @@ static void RemoveSocketIfIdentityMatches(const char *path,
 }
 
 - (NSData *)responseForPTYCommand:(NSString *)command
+                        registryID:(uint64_t)registryID
 {
     if (ATCommandPolicyFailure(command, self.allowArbitraryAT, NULL) != nil) {
         return nil;
@@ -634,7 +715,7 @@ static void RemoveSocketIfIdentityMatches(const char *path,
     EC20USBATTransport *transport =
         [EC20USBATTransport openWithSelector:
             [EC20USBATDeviceSelector
-                selectorWithRegistryID:self.selectedPTYRegistryID]
+                selectorWithRegistryID:registryID]
                                      error:&openError];
     if (transport == nil) {
         (void)openError;
@@ -692,6 +773,7 @@ static void RemoveSocketIfIdentityMatches(const char *path,
 
 - (NSData *)responseForPTYInteractiveCommand:(NSString *)command
                                      followUp:(NSData *)followUp
+                                   registryID:(uint64_t)registryID
 {
     if (ATCommandPolicyFailure(command, self.allowArbitraryAT, NULL) != nil ||
         !IsSMSSubmitCommand(command) || !IsValidSMSPDU(followUp)) {
@@ -707,7 +789,7 @@ static void RemoveSocketIfIdentityMatches(const char *path,
     EC20USBATTransport *transport =
         [EC20USBATTransport openWithSelector:
             [EC20USBATDeviceSelector
-                selectorWithRegistryID:self.selectedPTYRegistryID]
+                selectorWithRegistryID:registryID]
                                      error:&openError];
     if (transport == nil) {
         (void)openError;
@@ -760,6 +842,127 @@ static void RemoveSocketIfIdentityMatches(const char *path,
     return combined;
 }
 
+- (BOOL)startPTYBridgeForRegistryID:(uint64_t)registryID
+                              error:(NSError **)error
+{
+    if ((!self.mock && registryID == 0) || self.ptyBridge != nil) {
+        if (error != NULL) {
+            *error = DaemonError(16, @"The PTY bridge attach identity is invalid or already active.");
+        }
+        return NO;
+    }
+    __weak EC20Daemon *weakSelf = self;
+    NSError *bridgeError = nil;
+    EC20PTYBridge *bridge = [EC20PTYBridge
+        startWithCommandHandler:^NSData * _Nullable(NSString *command) {
+            EC20Daemon *strongSelf = weakSelf;
+            return [strongSelf responseForPTYCommand:command
+                                          registryID:registryID];
+        }
+        interactiveCommandMatcher:^BOOL(NSString *command) {
+            EC20Daemon *strongSelf = weakSelf;
+            return strongSelf != nil && IsSMSSubmitCommand(command) &&
+                   ATCommandPolicyFailure(command,
+                                          strongSelf.allowArbitraryAT,
+                                          NULL) == nil;
+        }
+        interactiveCommandHandler:^NSData * _Nullable(NSString *command,
+                                                       NSData *followUp) {
+            EC20Daemon *strongSelf = weakSelf;
+            return [strongSelf responseForPTYInteractiveCommand:command
+                                                       followUp:followUp
+                                                     registryID:registryID];
+        }
+        error:&bridgeError];
+    if (bridge == nil) {
+        if (error != NULL) {
+            *error = bridgeError != nil
+                ? bridgeError
+                : DaemonError(16, @"Could not start the EC20 PTY bridge.");
+        }
+        return NO;
+    }
+    self.ptyBridge = bridge;
+    return YES;
+}
+
+- (BOOL)refreshPTYAttachmentWithError:(NSError **)error
+{
+    if (!self.ptyEnabled || self.mock) {
+        return YES;
+    }
+    NSError *enumerationError = nil;
+    NSArray<EC20USBATDevice *> *devices =
+        [self transportDevicesWithError:&enumerationError];
+    if (devices == nil) {
+        if (error != NULL) {
+            *error = enumerationError;
+        }
+        return NO;
+    }
+    NSMutableArray<EC20USBATDevice *> *matches = [NSMutableArray array];
+    for (EC20USBATDevice *device in devices) {
+        if (device.locationID == self.selectedPTYLocationID) {
+            [matches addObject:device];
+        }
+    }
+    if (matches.count > 1) {
+        if (error != NULL) {
+            *error = DaemonError(18,
+                @"More than one AT interface maps to the selected PTY location.");
+        }
+        return NO;
+    }
+    if (matches.count == 0) {
+        // Keep one unadvertised tombstone PTY alive. Its handler remains pinned
+        // to the removed registry ID, so it can only return ERROR. Holding it
+        // until the replacement PTY is allocated prevents macOS from reusing
+        // the same /dev/ttysN name for a different attachment.
+        if (self.ptyBridge != nil) {
+            [self.retiredPTYBridge stop];
+            self.retiredPTYBridge = self.ptyBridge;
+            self.ptyBridge = nil;
+            self.selectedPTYWasRemoved = YES;
+        }
+        return YES;
+    }
+
+    EC20USBATDevice *device = matches.firstObject;
+    if (device.registryID == 0) {
+        if (error != NULL) {
+            *error = DaemonError(17,
+                @"The selected EC20 has no IORegistry attach identity.");
+        }
+        return NO;
+    }
+    if (self.ptyBridge != nil &&
+        device.registryID == self.selectedPTYRegistryID) {
+        return YES;
+    }
+
+    [self.ptyBridge stop];
+    self.ptyBridge = nil;
+    uint64_t nextGeneration = self.selectedPTYGeneration;
+    if (nextGeneration == 0) {
+        nextGeneration = 1;
+    } else if (self.selectedPTYWasRemoved ||
+               device.registryID != self.selectedPTYRegistryID) {
+        nextGeneration++;
+        if (nextGeneration == 0) {
+            nextGeneration = 1;
+        }
+    }
+    if (![self startPTYBridgeForRegistryID:device.registryID error:error]) {
+        return NO;
+    }
+    self.selectedPTYRegistryID = device.registryID;
+    self.selectedPTYGeneration = nextGeneration;
+    self.selectedPTYWasRemoved = NO;
+    [self.retiredPTYBridge stop];
+    self.retiredPTYBridge = nil;
+    return YES;
+}
+
 - (BOOL)preparePTYWithError:(NSError **)error
 {
     if (!self.ptyEnabled) {
@@ -801,6 +1004,15 @@ static void RemoveSocketIfIdentityMatches(const char *path,
                 [matches addObject:device];
             }
         }
+        if (matches.count == 0 && self.ptyLocationID != nil) {
+            // A launchd-managed daemon may start before its fixed USB slot is
+            // populated. Publish the IPC endpoint and reconcile on list.
+            self.selectedPTYLocationID = self.ptyLocationID.unsignedIntValue;
+            self.selectedPTYRegistryID = 0;
+            self.selectedPTYGeneration = 0;
+            self.selectedPTYWasRemoved = NO;
+            return YES;
+        }
         if (matches.count != 1) {
             if (error != NULL) {
                 *error = DaemonError(
@@ -826,47 +1038,28 @@ static void RemoveSocketIfIdentityMatches(const char *path,
 
     self.selectedPTYLocationID = locationID;
     self.selectedPTYRegistryID = registryID;
-    __weak EC20Daemon *weakSelf = self;
-    NSError *bridgeError = nil;
-    EC20PTYBridge *bridge = [EC20PTYBridge
-        startWithCommandHandler:^NSData * _Nullable(NSString *command) {
-            EC20Daemon *strongSelf = weakSelf;
-            return [strongSelf responseForPTYCommand:command];
-        }
-        interactiveCommandMatcher:^BOOL(NSString *command) {
-            EC20Daemon *strongSelf = weakSelf;
-            return strongSelf != nil && IsSMSSubmitCommand(command) &&
-                   ATCommandPolicyFailure(command,
-                                          strongSelf.allowArbitraryAT,
-                                          NULL) == nil;
-        }
-        interactiveCommandHandler:^NSData * _Nullable(NSString *command,
-                                                       NSData *followUp) {
-            EC20Daemon *strongSelf = weakSelf;
-            return [strongSelf responseForPTYInteractiveCommand:command
-                                                       followUp:followUp];
-        }
-        error:&bridgeError];
-    if (bridge == nil) {
+    self.selectedPTYGeneration = 1;
+    self.selectedPTYWasRemoved = NO;
+    if (![self startPTYBridgeForRegistryID:registryID error:error]) {
         self.selectedPTYLocationID = 0;
         self.selectedPTYRegistryID = 0;
-        if (error != NULL) {
-            *error = bridgeError != nil
-                ? bridgeError
-                : DaemonError(16, @"Could not start the EC20 PTY bridge.");
-        }
+        self.selectedPTYGeneration = 0;
+        self.selectedPTYWasRemoved = NO;
         return NO;
     }
-    self.ptyBridge = bridge;
     return YES;
 }
 
 - (void)cleanupPTY
 {
     [self.ptyBridge stop];
+    [self.retiredPTYBridge stop];
     self.ptyBridge = nil;
+    self.retiredPTYBridge = nil;
     self.selectedPTYLocationID = 0;
     self.selectedPTYRegistryID = 0;
+    self.selectedPTYGeneration = 0;
+    self.selectedPTYWasRemoved = NO;
 }
 
 - (void)setFailureCode:(NSString **)code
@@ -910,7 +1103,7 @@ static void RemoveSocketIfIdentityMatches(const char *path,
                    retryable:YES];
         return nil;
     }
-    if (self.ptyBridge != nil) {
+    if (self.ptyEnabled) {
         [self setFailureCode:errorCode message:errorMessage retryable:retryable
                         code:EC20IPCErrorCodeBusy
                      message:@"The AT interface is owned by the PTY bridge."
@@ -1143,9 +1336,9 @@ static void RemoveSocketIfIdentityMatches(const char *path,
 
     if ([request.method isEqualToString:EC20IPCMethodSystemHello]) {
         NSArray<NSString *> *capabilities;
-        if (self.ptyBridge != nil && self.mock) {
+        if (self.ptyEnabled && self.mock) {
             capabilities = @[@"devices.list", @"at.pty", @"mock.urc.inject"];
-        } else if (self.ptyBridge != nil) {
+        } else if (self.ptyEnabled) {
             capabilities = @[@"devices.list", @"at.pty"];
         } else {
             capabilities = @[@"devices.list", @"at.rpc"];
@@ -1158,17 +1351,14 @@ static void RemoveSocketIfIdentityMatches(const char *path,
         };
     } else if ([request.method isEqualToString:EC20IPCMethodDevicesList]) {
         NSError *listError = nil;
-        NSArray<NSDictionary<NSString *, id> *> *devices =
-            [self deviceObjectsWithError:&listError];
-        if (devices == nil) {
+        NSDictionary<NSString *, id> *snapshot =
+            [self snapshotWithError:&listError];
+        if (snapshot == nil) {
             wireCode = TransportWireCode(listError, YES);
             message = @"Could not enumerate EC20 devices.";
             retryable = YES;
         } else {
-            result = @{
-                @"revision": @1,
-                @"devices": devices,
-            };
+            result = snapshot;
         }
     } else if ([request.method isEqualToString:EC20IPCMethodATAcquire]) {
         result = [self handleAcquire:request
@@ -1620,7 +1810,9 @@ static BOOL RunSelfTests(NSError **error)
 
     NSDictionary<NSString *, id> *device = DeviceObject(0x03120000,
                                                          0,
+                                                         1,
                                                          YES,
+                                                         nil,
                                                          nil);
     if (!SelfTestAssert([device[@"instance_id"] isEqualToString:@"usb-03120000-1"] &&
                         [device[@"generation"] isEqual:@1] &&
@@ -1633,8 +1825,10 @@ static BOOL RunSelfTests(NSError **error)
 
     NSDictionary<NSString *, id> *ptyDevice = DeviceObject(0x03120000,
                                                             123,
+                                                            1,
                                                             NO,
-                                                            @"/dev/ttys999");
+                                                            @"/dev/ttys999",
+                                                            nil);
     if (!SelfTestAssert([ptyDevice[@"at"][@"transport"] isEqualToString:@"pty"] &&
                         [ptyDevice[@"at"][@"path"] isEqualToString:@"/dev/ttys999"] &&
                         [ptyDevice[@"at"][@"rpc_device_id"] isEqual:[NSNull null]] &&

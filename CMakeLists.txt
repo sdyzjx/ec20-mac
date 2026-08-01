@@ -85,6 +85,7 @@ target_link_libraries(ec20-at-probe PRIVATE
 
 add_executable(ec20d
     src/ec20d.m
+    src/EC20USBNetwork.m
 )
 
 target_compile_options(ec20d PRIVATE
