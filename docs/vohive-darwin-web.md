@@ -120,7 +120,8 @@ npm run build
 当前“前端可用”已包含 mock 完整回归与真实 EC20 AT 控制面，但仍不包含未验收的业务与数据面：
 
 - 真实 EC20 已运行 Vohive Worker/Manager，并验证身份、SIM、信号、运营商、注册和出站 SMS；
-- 出站短信 `>`/Ctrl-Z transaction 已通过；没有实机连续 USB reader、入站 SMS URC、USSD 或来电流程；
+- 出站短信 `>`/Ctrl-Z transaction 已通过；真实入站 SMS 也已完成两段 PDU 重组、入库和
+  `/api/sms/thread` 前端查询；USSD 和来电尚无实机网络流程；
 - `usbnet` 仍为 0，没有 ECM/MBIM/QMI session 或 `enX` 数据出口；
 - 代理、流量、VoWiFi 与通话功能没有 Darwin 实机证据；
 - 仍是 ad-hoc Mach-O，不是 `.app`，没有 launchd、Developer ID、公证或 DriverKit entitlement。

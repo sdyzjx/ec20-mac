@@ -75,4 +75,5 @@ mock prompt/Ctrl-Z 事务；Vohive SMS 相关 Go 包定向测试通过。上游 
   PS attach，尚无 ECM/MBIM/QMI 的 macOS IP 数据面。
 - `AT+CCHC=1..4` 在该固件上返回 `ERROR`，但不阻断 Manager 初始化、SIM READY
   或蜂窝注册。
-- 出站 SMS 已验收；入站 `+CMTI`、读取/删除、USSD、来电和热插拔仍未实机闭环。
+- 出站 SMS 已验收；又通过 Red Pocket 官方余额短信完成真实 `+CMTI`、两段 PDU
+  读取/删除、长短信重组、入库和前端会话查询；USSD、来电和热插拔仍未实机闭环。

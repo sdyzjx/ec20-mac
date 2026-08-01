@@ -46,7 +46,23 @@ Quectel 把 `AT+CMGS` 最长响应时间定义为 120 秒且由网络决定，�
   `status=ok`、`delivery_state=acked`，Manager 记录发送成功。
 
 `acked` 表示模块/网络已接受 SMS-SUBMIT，不等同于收件手机的最终送达报告。当前尚未实现
-状态报告关联，也未完成入站 `+CMTI`、读/删短信、USSD 或来电实机验收。
+状态报告关联；入站 `+CMTI`、读/删短信已按下节实机验收，USSD 和来电尚未实机验收。
+
+## 真实入站短信
+
+根据 [Red Pocket 官方余额查询说明](https://help.redpocket.com/how-can-i-check-my-account-balances)，
+GSMA 线路可向 `3888` 发送 `Balance`。实验只发送一次，出站请求得到 `+CMGS/OK`；
+约 6 秒后模块上报两个 `+CMTI` 索引。Vohive 的真实 Manager 完成：
+
+1. 按 `SM` 存储区读取两个 PDU；
+2. 重组两段长短信；
+3. 识别发送方为 `3888` 并调用 `processSMS`；
+4. 将 117 字符入站记录写入数据库（正文不入库到 Git）；
+5. 在前端会话 API 中与对应出站查询同时可见。
+
+入站短信比 SIM 身份同步更早到达时，数据库先用 `imsi:` 临时键保留记录。
+`UpsertSIMCardIdentity` 现在会在同一事务内把 `sms`、`sms_contacts` 和 `sms_delivery`
+在线重键到真实 ICCID，避免数据库有短信但前端按设备查询为空。
 
 ## 当前安全边界
 
