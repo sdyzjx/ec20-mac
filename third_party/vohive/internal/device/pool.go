@@ -2586,7 +2586,16 @@ func (w *Worker) StartNetwork() error {
 			return err
 		}
 	}
-	return nc.Connect()
+	if err := nc.Connect(); err != nil {
+		return err
+	}
+	// API-triggered connects do not pass through applyNetworkPreference, so
+	// start the same asynchronous public-IP refresh here as startup/reconcile.
+	// refreshIPs coalesces duplicate calls from those existing paths.
+	if w.Pool != nil {
+		w.Pool.refreshIPs(w, true)
+	}
+	return nil
 }
 
 func (w *Worker) StopNetwork() error {

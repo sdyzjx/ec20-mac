@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/1239t/vohive/internal/backend"
 	"github.com/1239t/vohive/internal/config"
@@ -15,6 +16,7 @@ type fakeController struct {
 	connErr     error
 	rotated     int
 	connectHook func()
+	publicHook  func()
 }
 
 func (f *fakeController) Connect() error {
@@ -31,9 +33,14 @@ func (f *fakeController) RotateIP() error {
 	f.rotated++
 	return nil
 }
-func (f *fakeController) GetPrivateIP() string                        { return "10.1.2.3" }
-func (f *fakeController) GetPrivateIPv6() string                      { return "" }
-func (f *fakeController) GetPublicIPv4AndV6NoCache() (string, string) { return "203.0.113.1", "" }
+func (f *fakeController) GetPrivateIP() string   { return "10.1.2.3" }
+func (f *fakeController) GetPrivateIPv6() string { return "" }
+func (f *fakeController) GetPublicIPv4AndV6NoCache() (string, string) {
+	if f.publicHook != nil {
+		f.publicHook()
+	}
+	return "203.0.113.1", ""
+}
 
 func TestNetControllerPrefersQMIThenMBIM(t *testing.T) {
 	w := &Worker{}
@@ -59,6 +66,38 @@ func TestWorkerStartNetworkUsesController(t *testing.T) {
 	}
 	if fc.connected {
 		t.Fatal("controller.Disconnect was not called")
+	}
+}
+
+func TestWorkerStartNetworkRefreshesPublicIPWhenAttachedToPool(t *testing.T) {
+	probed := make(chan struct{}, 1)
+	fc := &fakeController{publicHook: func() {
+		select {
+		case probed <- struct{}{}:
+		default:
+		}
+	}}
+	p := &Pool{}
+	w := &Worker{
+		ID:          "ecm-live",
+		Pool:        p,
+		netOverride: fc,
+		Config:      config.DeviceConfig{NetworkEnabled: true},
+	}
+	if err := w.StartNetwork(); err != nil {
+		t.Fatalf("StartNetwork: %v", err)
+	}
+	select {
+	case <-probed:
+	case <-time.After(time.Second):
+		t.Fatal("public IP refresh was not triggered")
+	}
+	deadline := time.Now().Add(time.Second)
+	for w.GetCachedIP() != "203.0.113.1" && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := w.GetCachedIP(); got != "203.0.113.1" {
+		t.Fatalf("cached public IP = %q, want probe result", got)
 	}
 }
 
