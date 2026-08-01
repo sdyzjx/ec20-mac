@@ -14,7 +14,9 @@
 NSErrorDomain const EC20PTYBridgeErrorDomain = @"EC20PTYBridgeErrorDomain";
 
 static const NSUInteger kMaximumCommandBytes = 4096;
+static const NSUInteger kMaximumInteractiveBytes = 64 * 1024;
 static const uint8_t kStandardErrorResponse[] = "\r\nERROR\r\n";
+static const uint8_t kStandardPromptResponse[] = "\r\n> ";
 
 static NSError *BridgeError(EC20PTYBridgeErrorCode code,
                             NSString *description,
@@ -156,15 +158,22 @@ static BOOL ConfigureRawSlave(int slaveFileDescriptor, NSError **error)
 @property(nonatomic) int stopReadFileDescriptor;
 @property(nonatomic) int stopWriteFileDescriptor;
 @property(nonatomic, copy) EC20PTYCommandHandler handler;
+@property(nonatomic, copy, nullable) EC20PTYInteractiveCommandMatcher interactiveMatcher;
+@property(nonatomic, copy, nullable) EC20PTYInteractiveCommandHandler interactiveHandler;
 @property(nonatomic, strong) NSCondition *exitCondition;
 @property(nonatomic, strong) NSLock *writeLock;
+@property(nonatomic, copy, nullable) NSString *pendingInteractiveCommand;
+@property(nonatomic, strong) NSMutableData *interactiveBuffer;
+@property(nonatomic) BOOL interactiveIgnoreLeadingTerminators;
 @property(nonatomic) BOOL exited;
 
 - (instancetype)initWithMaster:(int)master
                     slaveAnchor:(int)slaveAnchor
                        stopRead:(int)stopRead
                       stopWrite:(int)stopWrite
-                        handler:(EC20PTYCommandHandler)handler;
+                        handler:(EC20PTYCommandHandler)handler
+             interactiveMatcher:(nullable EC20PTYInteractiveCommandMatcher)interactiveMatcher
+             interactiveHandler:(nullable EC20PTYInteractiveCommandHandler)interactiveHandler;
 - (void)run;
 - (BOOL)writeResponse:(NSData *)response;
 - (void)requestStop;
@@ -179,6 +188,8 @@ static BOOL ConfigureRawSlave(int slaveFileDescriptor, NSError **error)
                        stopRead:(int)stopRead
                       stopWrite:(int)stopWrite
                         handler:(EC20PTYCommandHandler)handler
+             interactiveMatcher:(EC20PTYInteractiveCommandMatcher)interactiveMatcher
+             interactiveHandler:(EC20PTYInteractiveCommandHandler)interactiveHandler
 {
     self = [super init];
     if (self != nil) {
@@ -187,8 +198,11 @@ static BOOL ConfigureRawSlave(int slaveFileDescriptor, NSError **error)
         _stopReadFileDescriptor = stopRead;
         _stopWriteFileDescriptor = stopWrite;
         _handler = [handler copy];
+        _interactiveMatcher = [interactiveMatcher copy];
+        _interactiveHandler = [interactiveHandler copy];
         _exitCondition = [[NSCondition alloc] init];
         _writeLock = [[NSLock alloc] init];
+        _interactiveBuffer = [NSMutableData data];
     }
     return self;
 }
@@ -257,6 +271,24 @@ static BOOL ConfigureRawSlave(int slaveFileDescriptor, NSError **error)
         return;
     }
 
+    BOOL interactive = NO;
+    @try {
+        interactive = self.interactiveMatcher != nil &&
+                      self.interactiveHandler != nil &&
+                      self.interactiveMatcher(command);
+    } @catch (__unused NSException *exception) {
+        interactive = NO;
+    }
+    if (interactive) {
+        self.pendingInteractiveCommand = command;
+        [self.interactiveBuffer setLength:0];
+        self.interactiveIgnoreLeadingTerminators = YES;
+        NSData *prompt = [NSData dataWithBytes:kStandardPromptResponse
+                                        length:sizeof(kStandardPromptResponse) - 1];
+        (void)[self writeResponse:prompt];
+        return;
+    }
+
     NSData *response = nil;
     @try {
         response = self.handler(command);
@@ -270,6 +302,62 @@ static BOOL ConfigureRawSlave(int slaveFileDescriptor, NSError **error)
     (void)[self writeResponse:response];
 }
 
+- (void)finishInteractiveRequest
+{
+    NSString *command = self.pendingInteractiveCommand;
+    NSData *followUp = [self.interactiveBuffer copy];
+    self.pendingInteractiveCommand = nil;
+    [self.interactiveBuffer setLength:0];
+    self.interactiveIgnoreLeadingTerminators = NO;
+
+    NSData *response = nil;
+    @try {
+        response = command != nil && self.interactiveHandler != nil
+            ? self.interactiveHandler(command, followUp)
+            : nil;
+    } @catch (__unused NSException *exception) {
+        response = nil;
+    }
+    if (response == nil) {
+        [self writeStandardError];
+        return;
+    }
+    (void)[self writeResponse:response];
+}
+
+- (BOOL)consumeInteractiveByte:(uint8_t)byte
+{
+    if (self.pendingInteractiveCommand == nil) {
+        return NO;
+    }
+    if (self.interactiveIgnoreLeadingTerminators &&
+        (byte == '\r' || byte == '\n')) {
+        return YES;
+    }
+    self.interactiveIgnoreLeadingTerminators = NO;
+    if (byte == 0x1a) {
+        [self finishInteractiveRequest];
+        return YES;
+    }
+    if (byte == 0x1b) {
+        self.pendingInteractiveCommand = nil;
+        [self.interactiveBuffer setLength:0];
+        self.interactiveIgnoreLeadingTerminators = NO;
+        [self writeStandardError];
+        return YES;
+    }
+    if (byte < 0x20 || byte > 0x7e ||
+        self.interactiveBuffer.length == kMaximumInteractiveBytes) {
+        self.pendingInteractiveCommand = nil;
+        [self.interactiveBuffer setLength:0];
+        self.interactiveIgnoreLeadingTerminators = NO;
+        [self writeStandardError];
+        return YES;
+    }
+    [self.interactiveBuffer appendBytes:&byte length:1];
+    return YES;
+}
+
 - (void)consumeBytes:(const uint8_t *)bytes
                count:(NSUInteger)count
        commandBuffer:(NSMutableData *)commandBuffer
@@ -277,6 +365,9 @@ static BOOL ConfigureRawSlave(int slaveFileDescriptor, NSError **error)
 {
     for (NSUInteger index = 0; index < count; index++) {
         uint8_t byte = bytes[index];
+        if ([self consumeInteractiveByte:byte]) {
+            continue;
+        }
         if (byte == '\r' || byte == '\n') {
             if (*dropping) {
                 *dropping = NO;
@@ -448,10 +539,28 @@ static BOOL ConfigureRawSlave(int slaveFileDescriptor, NSError **error)
 + (instancetype)startWithCommandHandler:(EC20PTYCommandHandler)handler
                                    error:(NSError **)error
 {
+    return [self startWithCommandHandler:handler
+               interactiveCommandMatcher:nil
+               interactiveCommandHandler:nil
+                                   error:error];
+}
+
++ (instancetype)startWithCommandHandler:(EC20PTYCommandHandler)handler
+               interactiveCommandMatcher:(EC20PTYInteractiveCommandMatcher)interactiveMatcher
+               interactiveCommandHandler:(EC20PTYInteractiveCommandHandler)interactiveHandler
+                                   error:(NSError **)error
+{
     if (handler == nil) {
         AssignError(error,
                     BridgeError(EC20PTYBridgeErrorInvalidHandler,
                                 @"A PTY command handler is required.",
+                                0));
+        return nil;
+    }
+    if ((interactiveMatcher == nil) != (interactiveHandler == nil)) {
+        AssignError(error,
+                    BridgeError(EC20PTYBridgeErrorInvalidHandler,
+                                @"Interactive matcher and handler must be supplied together.",
                                 0));
         return nil;
     }
@@ -522,7 +631,9 @@ static BOOL ConfigureRawSlave(int slaveFileDescriptor, NSError **error)
            slaveAnchor:slave
               stopRead:stopPipe[0]
              stopWrite:stopPipe[1]
-               handler:handler];
+               handler:handler
+    interactiveMatcher:interactiveMatcher
+    interactiveHandler:interactiveHandler];
     NSThread *thread = [[NSThread alloc] initWithTarget:worker
                                                selector:@selector(run)
                                                  object:nil];
@@ -685,8 +796,26 @@ static BOOL SelfTestFailure(NSString *message, NSError **error)
         NSString *response = [NSString stringWithFormat:@"\r\n%@\r\r\nOK\r\n", command];
         return [response dataUsingEncoding:NSASCIIStringEncoding];
     };
+    __block BOOL interactiveHandlerCalled = NO;
+    EC20PTYInteractiveCommandMatcher matcher = ^BOOL(NSString *command) {
+        return [command isEqualToString:@"AT+CMGS=15"];
+    };
+    EC20PTYInteractiveCommandHandler interactiveHandler =
+        ^NSData *(NSString *command, NSData *followUp) {
+        NSData *expected = [@"001122AABB" dataUsingEncoding:NSASCIIStringEncoding];
+        if (![command isEqualToString:@"AT+CMGS=15"] ||
+            ![followUp isEqualToData:expected]) {
+            return nil;
+        }
+        interactiveHandlerCalled = YES;
+        return [@"\r\n+CMGS: 7\r\n\r\nOK\r\n"
+            dataUsingEncoding:NSASCIIStringEncoding];
+    };
     NSError *startError = nil;
-    EC20PTYBridge *bridge = [self startWithCommandHandler:handler error:&startError];
+    EC20PTYBridge *bridge = [self startWithCommandHandler:handler
+                                interactiveCommandMatcher:matcher
+                                interactiveCommandHandler:interactiveHandler
+                                                    error:&startError];
     if (bridge == nil) {
         AssignError(error, startError);
         return NO;
@@ -725,6 +854,31 @@ static BOOL SelfTestFailure(NSString *message, NSError **error)
         CloseFileDescriptor(slave);
         [bridge stop];
         return SelfTestFailure(@"Batched command framing self-test failed.", error);
+    }
+
+    NSData *interactiveCommand = [@"AT+CMGS=15\r\n"
+        dataUsingEncoding:NSASCIIStringEncoding];
+    NSData *expectedPrompt = [NSData dataWithBytes:kStandardPromptResponse
+                                             length:sizeof(kStandardPromptResponse) - 1];
+    NSData *interactivePayloadPart1 = [@"001122"
+        dataUsingEncoding:NSASCIIStringEncoding];
+    NSMutableData *interactivePayloadPart2 = [[@"AABB"
+        dataUsingEncoding:NSASCIIStringEncoding] mutableCopy];
+    const uint8_t controlZ = 0x1a;
+    [interactivePayloadPart2 appendBytes:&controlZ length:1];
+    NSData *expectedInteractiveResponse = [@"\r\n+CMGS: 7\r\n\r\nOK\r\n"
+        dataUsingEncoding:NSASCIIStringEncoding];
+    if (!TestWriteAll(slave, interactiveCommand) ||
+        ![TestReadExactly(slave, expectedPrompt.length, 2.0)
+            isEqualToData:expectedPrompt] ||
+        !TestWriteAll(slave, interactivePayloadPart1) ||
+        !TestWriteAll(slave, interactivePayloadPart2) ||
+        ![TestReadExactly(slave, expectedInteractiveResponse.length, 2.0)
+            isEqualToData:expectedInteractiveResponse] ||
+        !interactiveHandlerCalled) {
+        CloseFileDescriptor(slave);
+        [bridge stop];
+        return SelfTestFailure(@"Interactive prompt/Ctrl-Z self-test failed.", error);
     }
 
     NSData *unsolicited = [@"\r\n+CUSD: 0,\"Mock balance\",15\r\n"

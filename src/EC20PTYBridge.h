@@ -20,6 +20,14 @@ typedef NS_ERROR_ENUM(EC20PTYBridgeErrorDomain, EC20PTYBridgeErrorCode) {
 /// through to the PTY unchanged.
 typedef NSData * _Nullable (^EC20PTYCommandHandler)(NSString *command);
 
+/// Identifies commands that require a modem prompt followed by a raw payload.
+/// The bridge emits a standard "> " prompt, collects bytes through Ctrl-Z,
+/// then calls the interactive handler with Ctrl-Z removed.
+typedef BOOL (^EC20PTYInteractiveCommandMatcher)(NSString *command);
+typedef NSData * _Nullable (^EC20PTYInteractiveCommandHandler)(
+    NSString *command,
+    NSData *followUp);
+
 /// A deliberately small experimental serial facade for the ec20d RPC-era USB
 /// transport. It does not enumerate or access USB by itself.
 @interface EC20PTYBridge : NSObject
@@ -32,6 +40,14 @@ typedef NSData * _Nullable (^EC20PTYCommandHandler)(NSString *command);
 
 /// Creates a raw, owner-only PTY and starts its worker before returning.
 + (nullable instancetype)startWithCommandHandler:(EC20PTYCommandHandler)handler
+                                           error:(NSError **)error;
+
+/// Extended constructor for prompt-driven operations such as AT+CMGS. Normal
+/// commands continue to use `handler`; interactive payloads are bounded and
+/// cannot be interleaved with another command.
++ (nullable instancetype)startWithCommandHandler:(EC20PTYCommandHandler)handler
+                       interactiveCommandMatcher:(nullable EC20PTYInteractiveCommandMatcher)matcher
+                       interactiveCommandHandler:(nullable EC20PTYInteractiveCommandHandler)interactiveHandler
                                            error:(NSError **)error;
 
 /// Writes one already-framed unsolicited modem record to the PTY. This is

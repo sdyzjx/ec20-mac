@@ -1929,7 +1929,7 @@ func (m *Manager) SendSMSWithOptions(phone, message string, opts smscodec.Submit
 			cmd:          fmt.Sprintf("AT+CMGS=%d", tpduLen), // PDU 长度 (不含 SMSC)
 			respChan:     make(chan string, 1),
 			errChan:      make(chan error, 1),
-			timeout:      20 * time.Second, // 增加超时时间，因为包含两步
+			timeout:      130 * time.Second, // Quectel AT+CMGS 网络响应最长 120s
 			highPriority: true,
 			interactive:  true,
 			waitPrompt:   true,
@@ -1951,7 +1951,7 @@ func (m *Manager) SendSMSWithOptions(phone, message string, opts smscodec.Submit
 			}
 		case err := <-req.errChan:
 			return fmt.Errorf("发送分片 %d 失败: %w", i+1, err)
-		case <-time.After(20 * time.Second):
+		case <-time.After(130 * time.Second):
 			return errors.New("发送超时")
 		}
 

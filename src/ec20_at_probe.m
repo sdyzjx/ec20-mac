@@ -32,11 +32,12 @@ static void PrintUsage(const char *program)
             "  %s --experiment [--registry-id ID | --location-id ID]\n"
             "  %s --command 'AT+QCFG=\"usbnet\"' "
             "[--registry-id ID | --location-id ID]\n"
+            "  %s --recover-interactive [--registry-id ID | --location-id ID]\n"
             "  %s --self-test\n\n"
             "ID 可使用十进制或 0x 前缀十六进制。\n"
             "第一版仅允许: AT, ATI, AT+GMR, AT+QCFG=\"usbnet\"。\n"
             "它只接管 2c7c:0125 的 USB 接口 2，绝不打开接口 4。\n",
-            program, program, program, program);
+            program, program, program, program, program);
 }
 
 static const char *CString(NSString *string)
@@ -419,6 +420,38 @@ static int RunSelfTest(void)
     return ExitOK;
 }
 
+static int RunInteractiveRecovery(EC20USBATDeviceSelector *selector)
+{
+    NSError *error = nil;
+    EC20USBATTransport *transport =
+        [EC20USBATTransport openWithSelector:selector error:&error];
+    if (transport == nil) {
+        PrintNSError("打开 EC20 AT 传输失败", error);
+        return ExitCodeForTransportError(error);
+    }
+    EC20USBATTraceHandler traceHandler =
+        ^(EC20USBATTraceKind kind, NSData *data) {
+        if (kind == EC20USBATTraceStaleInput) {
+            PrintChunk("STALE", data);
+        } else if (kind == EC20USBATTraceCommandReady) {
+            PrintChunk("TX", data);
+        } else {
+            PrintChunk("RX", data);
+        }
+    };
+    NSData *response = nil;
+    BOOL succeeded = [transport cancelInteractiveInputWithResponse:&response
+                                                       traceHandler:traceHandler
+                                                              error:&error];
+    [transport close];
+    if (!succeeded) {
+        PrintNSError("交互恢复失败", error);
+        return ExitCodeForTransportError(error);
+    }
+    fprintf(stdout, "已发送 ESC；必须继续用 AT/OK 验证模块恢复。\n");
+    return ExitOK;
+}
+
 int main(int argc, const char *argv[])
 {
     @autoreleasepool {
@@ -452,6 +485,16 @@ int main(int argc, const char *argv[])
             }
             NSString *command = [NSString stringWithUTF8String:argv[2]];
             return RunCommands(@[command != nil ? command : @""], selector);
+        }
+        if (argc >= 2 && strcmp(argv[1], "--recover-interactive") == 0) {
+            BOOL valid = NO;
+            EC20USBATDeviceSelector *selector =
+                ParseSelector(argc, argv, 2, &valid);
+            if (!valid) {
+                PrintUsage(argv[0]);
+                return ExitUsage;
+            }
+            return RunInteractiveRecovery(selector);
         }
         if (argc == 2 && strcmp(argv[1], "--self-test") == 0) {
             return RunSelfTest();

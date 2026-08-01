@@ -17,6 +17,11 @@ static const uint8_t kATConfigurationValue = 1;
 static const uint8_t kATInterfaceNumber = 2;
 static const NSTimeInterval kReadSliceSeconds = 0.35;
 static const NSTimeInterval kCommandDeadlineSeconds = 3.0;
+static const NSTimeInterval kInteractivePromptDeadlineSeconds = 5.0;
+// Quectel documents AT+CMGS as network-determined with a maximum response
+// time of 120 seconds. Leave a small transport margin so the Vohive request
+// deadline remains the outer watchdog.
+static const NSTimeInterval kInteractiveFinalDeadlineSeconds = 125.0;
 static const NSTimeInterval kDrainQuietSeconds = 0.15;
 static const NSTimeInterval kDrainDeadlineSeconds = 0.75;
 static const NSUInteger kMaxResponseBytes = 64 * 1024;
@@ -614,6 +619,31 @@ static BOOL IsValidWireCommand(NSString *command)
     return YES;
 }
 
+static BOOL IsValidInteractiveFollowUp(NSData *followUp)
+{
+    if (followUp.length == 0 || followUp.length > kMaxResponseBytes) {
+        return NO;
+    }
+    const uint8_t *bytes = followUp.bytes;
+    for (NSUInteger index = 0; index < followUp.length; index++) {
+        if (bytes[index] < 0x20 || bytes[index] > 0x7e) {
+            return NO;
+        }
+    }
+    return YES;
+}
+
+static BOOL ContainsPrompt(NSData *data)
+{
+    const uint8_t *bytes = data.bytes;
+    for (NSUInteger index = 0; index < data.length; index++) {
+        if (bytes[index] == '>') {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 - (BOOL)executeCommand:(NSString *)command
               response:(NSData **)response
           terminalState:(EC20USBATTerminalState *)terminalState
@@ -785,6 +815,323 @@ static BOOL IsValidWireCommand(NSString *command)
         }
     }
     return NO;
+}
+
+- (BOOL)executeInteractiveCommand:(NSString *)command
+                          followUp:(NSData *)followUp
+                          response:(NSData **)response
+                      terminalState:(EC20USBATTerminalState *)terminalState
+                       traceHandler:(EC20USBATTraceHandler)traceHandler
+                              error:(NSError **)error
+{
+    if (response != NULL) {
+        *response = [NSData data];
+    }
+    if (terminalState != NULL) {
+        *terminalState = EC20USBATTerminalPending;
+    }
+    if (!IsValidWireCommand(command) || !IsValidInteractiveFollowUp(followUp)) {
+        if (error != NULL) {
+            *error = TransportError(
+                EC20USBATTransportErrorInvalidCommand,
+                @"Interactive AT command and payload must be bounded printable ASCII.",
+                nil,
+                nil);
+        }
+        return NO;
+    }
+    if (self.usbInterface == nil || self.bulkIn == nil || self.bulkOut == nil) {
+        if (error != NULL) {
+            *error = TransportError(EC20USBATTransportErrorInterfaceOpen,
+                                    @"接口 2 未打开或已经关闭",
+                                    nil,
+                                    nil);
+        }
+        return NO;
+    }
+
+    NSError *drainError = nil;
+    if (![self drainStaleInputWithTraceHandler:traceHandler error:&drainError]) {
+        if (error != NULL) {
+            *error = drainError;
+        }
+        return NO;
+    }
+
+    NSData *commandData = [[command stringByAppendingString:@"\r"]
+        dataUsingEncoding:NSASCIIStringEncoding];
+    if (traceHandler != nil) {
+        traceHandler(EC20USBATTraceCommandReady,
+                     [command dataUsingEncoding:NSASCIIStringEncoding]);
+    }
+    NSUInteger bytesTransferred = 0;
+    NSError *writeError = nil;
+    BOOL wrote = [self.bulkOut sendIORequestWithData:[commandData mutableCopy]
+                                    bytesTransferred:&bytesTransferred
+                                   completionTimeout:1.0
+                                               error:&writeError];
+    if (!wrote || bytesTransferred != commandData.length) {
+        if (error != NULL) {
+            *error = TransportError(EC20USBATTransportErrorUSBWrite,
+                                    @"Interactive AT command bulk OUT failed.",
+                                    writeError,
+                                    nil);
+        }
+        return NO;
+    }
+
+    NSMutableData *promptResponse = [NSMutableData data];
+    NSTimeInterval promptDeadline = NSProcessInfo.processInfo.systemUptime +
+                                    kInteractivePromptDeadlineSeconds;
+    EC20USBATTerminalState state = EC20USBATTerminalPending;
+    while (NSProcessInfo.processInfo.systemUptime < promptDeadline &&
+           state == EC20USBATTerminalPending && !ContainsPrompt(promptResponse)) {
+        NSTimeInterval remaining = promptDeadline - NSProcessInfo.processInfo.systemUptime;
+        NSTimeInterval timeout = remaining > 0.001 ? remaining : 0.001;
+        if (timeout > kReadSliceSeconds) {
+            timeout = kReadSliceSeconds;
+        }
+        NSMutableData *rx = [NSMutableData dataWithLength:4096];
+        bytesTransferred = 0;
+        NSError *readError = nil;
+        BOOL read = [self.bulkIn sendIORequestWithData:rx
+                                      bytesTransferred:&bytesTransferred
+                                     completionTimeout:timeout
+                                                 error:&readError];
+        if (!read) {
+            if (IsTimeoutError(readError)) {
+                continue;
+            }
+            if (error != NULL) {
+                *error = TransportError(EC20USBATTransportErrorUSBRead,
+                                        @"等待交互提示时 bulk IN 失败",
+                                        readError,
+                                        nil);
+            }
+            return NO;
+        }
+        if (bytesTransferred > rx.length ||
+            promptResponse.length > kMaxResponseBytes - bytesTransferred) {
+            if (error != NULL) {
+                *error = TransportError(EC20USBATTransportErrorUSBRead,
+                                        @"交互提示响应越界",
+                                        nil,
+                                        nil);
+            }
+            return NO;
+        }
+        if (bytesTransferred == 0) {
+            continue;
+        }
+        NSData *chunk = [NSData dataWithBytes:rx.bytes length:bytesTransferred];
+        if (traceHandler != nil) {
+            traceHandler(EC20USBATTraceResponse, chunk);
+        }
+        [promptResponse appendData:chunk];
+        state = [[self class] terminalStateForResponseData:promptResponse];
+    }
+
+    if (!ContainsPrompt(promptResponse)) {
+        if (response != NULL) {
+            *response = [promptResponse copy];
+        }
+        if (terminalState != NULL) {
+            *terminalState = state;
+        }
+        if (error != NULL) {
+            *error = state == EC20USBATTerminalError
+                ? TransportError(EC20USBATTransportErrorModem,
+                                 @"模块在交互提示前返回 ERROR", nil, nil)
+                : TransportError(EC20USBATTransportErrorUSBRead,
+                                 @"等待交互提示超时", nil, nil);
+        }
+        return NO;
+    }
+
+    NSMutableData *wireFollowUp = [followUp mutableCopy];
+    const uint8_t controlZ = 0x1a;
+    [wireFollowUp appendBytes:&controlZ length:1];
+    bytesTransferred = 0;
+    writeError = nil;
+    wrote = [self.bulkOut sendIORequestWithData:wireFollowUp
+                               bytesTransferred:&bytesTransferred
+                              completionTimeout:2.0
+                                          error:&writeError];
+    if (!wrote || bytesTransferred != wireFollowUp.length) {
+        if (error != NULL) {
+            *error = TransportError(EC20USBATTransportErrorUSBWrite,
+                                    @"Interactive payload bulk OUT failed.",
+                                    writeError,
+                                    nil);
+        }
+        return NO;
+    }
+
+    NSMutableData *finalResponse = [NSMutableData data];
+    NSTimeInterval finalDeadline = NSProcessInfo.processInfo.systemUptime +
+                                   kInteractiveFinalDeadlineSeconds;
+    state = EC20USBATTerminalPending;
+    while (NSProcessInfo.processInfo.systemUptime < finalDeadline &&
+           state == EC20USBATTerminalPending) {
+        NSTimeInterval remaining = finalDeadline - NSProcessInfo.processInfo.systemUptime;
+        NSTimeInterval timeout = remaining > 0.001 ? remaining : 0.001;
+        if (timeout > kReadSliceSeconds) {
+            timeout = kReadSliceSeconds;
+        }
+        NSMutableData *rx = [NSMutableData dataWithLength:4096];
+        bytesTransferred = 0;
+        NSError *readError = nil;
+        BOOL read = [self.bulkIn sendIORequestWithData:rx
+                                      bytesTransferred:&bytesTransferred
+                                     completionTimeout:timeout
+                                                 error:&readError];
+        if (!read) {
+            if (IsTimeoutError(readError)) {
+                continue;
+            }
+            if (error != NULL) {
+                *error = TransportError(EC20USBATTransportErrorUSBRead,
+                                        @"等待交互终止行时 bulk IN 失败",
+                                        readError,
+                                        nil);
+            }
+            return NO;
+        }
+        if (bytesTransferred > rx.length ||
+            finalResponse.length > kMaxResponseBytes - bytesTransferred) {
+            if (error != NULL) {
+                *error = TransportError(EC20USBATTransportErrorUSBRead,
+                                        @"交互最终响应越界",
+                                        nil,
+                                        nil);
+            }
+            return NO;
+        }
+        if (bytesTransferred == 0) {
+            continue;
+        }
+        NSData *chunk = [NSData dataWithBytes:rx.bytes length:bytesTransferred];
+        if (traceHandler != nil) {
+            traceHandler(EC20USBATTraceResponse, chunk);
+        }
+        [finalResponse appendData:chunk];
+        state = [[self class] terminalStateForResponseData:finalResponse];
+    }
+
+    if (response != NULL) {
+        *response = [finalResponse copy];
+    }
+    if (terminalState != NULL) {
+        *terminalState = state;
+    }
+    if (state == EC20USBATTerminalOK) {
+        return YES;
+    }
+    if (error != NULL) {
+        *error = state == EC20USBATTerminalError
+            ? TransportError(EC20USBATTransportErrorModem,
+                             @"模块返回显式 ERROR", nil, nil)
+            : TransportError(EC20USBATTransportErrorUSBRead,
+                             @"等待交互终止行超时", nil, nil);
+    }
+    return NO;
+}
+
+- (BOOL)cancelInteractiveInputWithResponse:(NSData **)response
+                               traceHandler:(EC20USBATTraceHandler)traceHandler
+                                      error:(NSError **)error
+{
+    if (response != NULL) {
+        *response = [NSData data];
+    }
+    if (self.usbInterface == nil || self.bulkIn == nil || self.bulkOut == nil) {
+        if (error != NULL) {
+            *error = TransportError(EC20USBATTransportErrorInterfaceOpen,
+                                    @"接口 2 未打开或已经关闭", nil, nil);
+        }
+        return NO;
+    }
+
+    NSError *drainError = nil;
+    if (![self drainStaleInputWithTraceHandler:traceHandler error:&drainError]) {
+        if (error != NULL) {
+            *error = drainError;
+        }
+        return NO;
+    }
+
+    const uint8_t escape = 0x1b;
+    NSMutableData *tx = [NSMutableData dataWithBytes:&escape length:1];
+    if (traceHandler != nil) {
+        traceHandler(EC20USBATTraceCommandReady, [tx copy]);
+    }
+    NSUInteger bytesTransferred = 0;
+    NSError *writeError = nil;
+    BOOL wrote = [self.bulkOut sendIORequestWithData:tx
+                                    bytesTransferred:&bytesTransferred
+                                   completionTimeout:1.0
+                                               error:&writeError];
+    if (!wrote || bytesTransferred != 1) {
+        if (error != NULL) {
+            *error = TransportError(EC20USBATTransportErrorUSBWrite,
+                                    @"发送交互取消 ESC 失败",
+                                    writeError,
+                                    nil);
+        }
+        return NO;
+    }
+
+    NSMutableData *received = [NSMutableData data];
+    NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 3.0;
+    while (NSProcessInfo.processInfo.systemUptime < deadline) {
+        NSTimeInterval remaining = deadline - NSProcessInfo.processInfo.systemUptime;
+        NSTimeInterval timeout = remaining > kReadSliceSeconds
+            ? kReadSliceSeconds
+            : (remaining > 0.001 ? remaining : 0.001);
+        NSMutableData *rx = [NSMutableData dataWithLength:4096];
+        bytesTransferred = 0;
+        NSError *readError = nil;
+        BOOL read = [self.bulkIn sendIORequestWithData:rx
+                                      bytesTransferred:&bytesTransferred
+                                     completionTimeout:timeout
+                                                 error:&readError];
+        if (!read) {
+            if (IsTimeoutError(readError)) {
+                continue;
+            }
+            if (error != NULL) {
+                *error = TransportError(EC20USBATTransportErrorUSBRead,
+                                        @"ESC 后读取失败", readError, nil);
+            }
+            return NO;
+        }
+        if (bytesTransferred > rx.length ||
+            received.length > kMaxResponseBytes - bytesTransferred) {
+            if (error != NULL) {
+                *error = TransportError(EC20USBATTransportErrorUSBRead,
+                                        @"ESC 响应越界", nil, nil);
+            }
+            return NO;
+        }
+        if (bytesTransferred == 0) {
+            continue;
+        }
+        NSData *chunk = [NSData dataWithBytes:rx.bytes length:bytesTransferred];
+        if (traceHandler != nil) {
+            traceHandler(EC20USBATTraceResponse, chunk);
+        }
+        [received appendData:chunk];
+        if ([[self class] terminalStateForResponseData:received] !=
+            EC20USBATTerminalPending) {
+            break;
+        }
+    }
+    if (response != NULL) {
+        *response = [received copy];
+    }
+    // A successfully written ESC is a completed recovery attempt even when
+    // firmware emits no acknowledgement. Callers must probe AT afterward.
+    return YES;
 }
 
 - (void)close

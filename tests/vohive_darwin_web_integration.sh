@@ -296,6 +296,26 @@ case "$AT_RESPONSE" in
         ;;
 esac
 
+SMS_RESPONSE=$(curl -fsS --max-time 30 \
+    -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' \
+    --data '{"device_id":"ec20-mock","phone":"+8613800138000","message":"EC20 macOS SMS integration test","encoding":"auto"}' \
+    "$BASE_URL/api/sms/send") ||
+    fail "managed device SMS request failed"
+for expected_sms_field in \
+    '"status":"ok"' \
+    '"device":"ec20-mock"' \
+    '"parts_total":1'
+do
+    case "$SMS_RESPONSE" in
+        *"$expected_sms_field"*) ;;
+        *)
+            printf '%s\n' "$SMS_RESPONSE" >&2
+            fail "managed device SMS transaction did not complete through prompt/Ctrl-Z"
+            ;;
+    esac
+done
+
 curl -fsS --max-time 10 \
     -X DELETE \
     -H "Authorization: Bearer $TOKEN" \

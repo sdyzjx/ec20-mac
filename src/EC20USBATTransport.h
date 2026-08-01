@@ -99,6 +99,23 @@ typedef void (^EC20USBATTraceHandler)(EC20USBATTraceKind kind, NSData *data);
            traceHandler:(nullable EC20USBATTraceHandler)traceHandler
                   error:(NSError **)error;
 
+/// Executes a prompt-driven AT transaction. `followUp` excludes Ctrl-Z; the
+/// transport waits for the modem's '>' prompt, writes the payload plus Ctrl-Z,
+/// and then waits for the final OK/ERROR. The returned response contains only
+/// bytes received after the prompt so the PTY facade does not emit it twice.
+- (BOOL)executeInteractiveCommand:(NSString *)command
+                          followUp:(NSData *)followUp
+                          response:(NSData * _Nullable * _Nullable)response
+                      terminalState:(EC20USBATTerminalState * _Nullable)terminalState
+                       traceHandler:(nullable EC20USBATTraceHandler)traceHandler
+                              error:(NSError **)error;
+
+/// Sends a raw ESC byte to cancel a modem input transaction. This is a
+/// recovery primitive only; it never targets interface 4.
+- (BOOL)cancelInteractiveInputWithResponse:(NSData * _Nullable * _Nullable)response
+                               traceHandler:(nullable EC20USBATTraceHandler)traceHandler
+                                      error:(NSError **)error;
+
 - (void)close;
 
 @end

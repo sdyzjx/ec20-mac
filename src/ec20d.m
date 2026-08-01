@@ -196,6 +196,58 @@ static NSData *MockPTYResponseForCommand(NSString *command)
     return [mockText dataUsingEncoding:NSASCIIStringEncoding];
 }
 
+static BOOL IsSMSSubmitCommand(NSString *command)
+{
+    NSString *upper = [command uppercaseString];
+    static NSRegularExpression *pattern;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        pattern = [NSRegularExpression
+            regularExpressionWithPattern:@"^AT\\+CMGS=[0-9]{1,5}$"
+                                  options:0
+                                    error:NULL];
+    });
+    return [pattern firstMatchInString:upper
+                               options:0
+                                 range:NSMakeRange(0, upper.length)] != nil;
+}
+
+static BOOL IsValidSMSPDU(NSData *data)
+{
+    if (data.length == 0 || data.length > 64 * 1024 || data.length % 2 != 0) {
+        return NO;
+    }
+    const uint8_t *bytes = data.bytes;
+    for (NSUInteger index = 0; index < data.length; index++) {
+        uint8_t byte = bytes[index];
+        BOOL digit = byte >= '0' && byte <= '9';
+        BOOL upper = byte >= 'A' && byte <= 'F';
+        BOOL lower = byte >= 'a' && byte <= 'f';
+        if (!digit && !upper && !lower) {
+            return NO;
+        }
+    }
+    return YES;
+}
+
+static BOOL ContainsSMSSubmitReference(NSData *data)
+{
+    NSString *text = [[NSString alloc] initWithData:data
+                                           encoding:NSASCIIStringEncoding];
+    if (text == nil) {
+        return NO;
+    }
+    for (NSString *line in [text componentsSeparatedByCharactersInSet:
+             NSCharacterSet.newlineCharacterSet]) {
+        NSString *trimmed = [line
+            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        if ([[trimmed uppercaseString] hasPrefix:@"+CMGS:"]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 static NSString *ATCommandPolicyFailure(NSString *command,
                                         BOOL allowArbitraryAT,
                                         BOOL *deniedByAllowlist)
@@ -599,7 +651,8 @@ static void RemoveSocketIfIdentityMatches(const char *path,
                          terminalState == EC20USBATTerminalError &&
                          [transportError.domain isEqualToString:EC20USBATTransportErrorDomain] &&
                          transportError.code == EC20USBATTransportErrorModem;
-    if ((!succeeded && !terminalError) || staleInputOverflow) {
+    if ((!succeeded && !terminalError) || staleInputOverflow ||
+        (succeeded && !ContainsSMSSubmitReference(response))) {
         return nil;
     }
     if (response == nil) {
@@ -609,6 +662,72 @@ static void RemoveSocketIfIdentityMatches(const char *path,
         return nil;
     }
 
+    NSMutableData *combined = [staleInput mutableCopy];
+    [combined appendData:response];
+    return combined;
+}
+
+- (NSData *)responseForPTYInteractiveCommand:(NSString *)command
+                                     followUp:(NSData *)followUp
+{
+    if (ATCommandPolicyFailure(command, self.allowArbitraryAT, NULL) != nil ||
+        !IsSMSSubmitCommand(command) || !IsValidSMSPDU(followUp)) {
+        return nil;
+    }
+
+    if (self.mock) {
+        return [@"\r\n+CMGS: 1\r\n\r\nOK\r\n"
+            dataUsingEncoding:NSASCIIStringEncoding];
+    }
+
+    NSError *openError = nil;
+    EC20USBATTransport *transport =
+        [EC20USBATTransport openWithSelector:
+            [EC20USBATDeviceSelector
+                selectorWithRegistryID:self.selectedPTYRegistryID]
+                                     error:&openError];
+    if (transport == nil) {
+        (void)openError;
+        return nil;
+    }
+
+    NSMutableData *staleInput = [NSMutableData data];
+    __block BOOL staleInputOverflow = NO;
+    NSData *response = nil;
+    EC20USBATTerminalState terminalState = EC20USBATTerminalPending;
+    NSError *transportError = nil;
+    BOOL succeeded = NO;
+    @try {
+        succeeded = [transport executeInteractiveCommand:command
+                                                 followUp:followUp
+                                                 response:&response
+                                             terminalState:&terminalState
+                                              traceHandler:^(EC20USBATTraceKind kind, NSData *data) {
+            if (kind == EC20USBATTraceStaleInput &&
+                staleInput.length + data.length <= kATTransportMaximumResponseBytes) {
+                [staleInput appendData:data];
+            } else if (kind == EC20USBATTraceStaleInput) {
+                staleInputOverflow = YES;
+            }
+        }
+                                                     error:&transportError];
+    } @finally {
+        [transport close];
+    }
+
+    BOOL terminalError = !succeeded &&
+                         terminalState == EC20USBATTerminalError &&
+                         [transportError.domain isEqualToString:EC20USBATTransportErrorDomain] &&
+                         transportError.code == EC20USBATTransportErrorModem;
+    if ((!succeeded && !terminalError) || staleInputOverflow) {
+        return nil;
+    }
+    if (response == nil) {
+        response = [NSData data];
+    }
+    if (staleInput.length + response.length > kATTransportMaximumResponseBytes) {
+        return nil;
+    }
     NSMutableData *combined = [staleInput mutableCopy];
     [combined appendData:response];
     return combined;
@@ -686,6 +805,19 @@ static void RemoveSocketIfIdentityMatches(const char *path,
         startWithCommandHandler:^NSData * _Nullable(NSString *command) {
             EC20Daemon *strongSelf = weakSelf;
             return [strongSelf responseForPTYCommand:command];
+        }
+        interactiveCommandMatcher:^BOOL(NSString *command) {
+            EC20Daemon *strongSelf = weakSelf;
+            return strongSelf != nil && IsSMSSubmitCommand(command) &&
+                   ATCommandPolicyFailure(command,
+                                          strongSelf.allowArbitraryAT,
+                                          NULL) == nil;
+        }
+        interactiveCommandHandler:^NSData * _Nullable(NSString *command,
+                                                       NSData *followUp) {
+            EC20Daemon *strongSelf = weakSelf;
+            return [strongSelf responseForPTYInteractiveCommand:command
+                                                       followUp:followUp];
         }
         error:&bridgeError];
     if (bridge == nil) {
