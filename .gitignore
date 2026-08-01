@@ -1,0 +1,17 @@
+# CMake build trees
+/build/
+/build-*/
+/cmake-build-*/
+
+# Xcode user state and generated products
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# macOS metadata
+.DS_Store
+
+# Local runtime state
+*.log
+*.pid
+*.sock
