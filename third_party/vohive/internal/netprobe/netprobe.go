@@ -8,8 +8,9 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/1239t/vohive/internal/netbind"
 )
 
 type Family int
@@ -127,20 +128,10 @@ func (p *Prober) lookupHost(ctx context.Context, host string) ([]string, error) 
 }
 
 func (p *Prober) boundDialer() *net.Dialer {
-	d := &net.Dialer{Timeout: p.cfg.Timeout}
-	if strings.TrimSpace(p.cfg.Interface) == "" {
-		return d
+	return &net.Dialer{
+		Timeout: p.cfg.Timeout,
+		Control: netbind.Control(p.cfg.Interface),
 	}
-	d.Control = func(_, _ string, c syscall.RawConn) error {
-		var serr error
-		if err := c.Control(func(fd uintptr) {
-			serr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, p.cfg.Interface)
-		}); err != nil {
-			return err
-		}
-		return serr
-	}
-	return d
 }
 
 func withFamily(ctx context.Context, fam Family) context.Context {

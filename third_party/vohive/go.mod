@@ -105,3 +105,5 @@ require (
 )
 
 replace github.com/emiago/sipgo => ./third_party/sipgo
+
+replace github.com/1239t/swu-go => ../swu-go

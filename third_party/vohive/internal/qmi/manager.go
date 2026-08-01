@@ -7,12 +7,12 @@ import (
 	"net"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
 	"github.com/1239t/vohive/internal/apduarbiter"
 	"github.com/1239t/vohive/internal/config"
+	"github.com/1239t/vohive/internal/netbind"
 	"github.com/1239t/vohive/internal/netprobe"
 	"github.com/1239t/vohive/pkg/logger"
 
@@ -1093,20 +1093,10 @@ func (m *Manager) publicIPDNSServers() []string {
 }
 
 func (m *Manager) boundDialer(timeout time.Duration) *net.Dialer {
-	dialer := &net.Dialer{Timeout: timeout}
-	if strings.TrimSpace(m.cfg.Interface) == "" {
-		return dialer
+	return &net.Dialer{
+		Timeout: timeout,
+		Control: netbind.Control(m.cfg.Interface),
 	}
-	dialer.Control = func(network, address string, c syscall.RawConn) error {
-		var sockErr error
-		if err := c.Control(func(fd uintptr) {
-			sockErr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, m.cfg.Interface)
-		}); err != nil {
-			return err
-		}
-		return sockErr
-	}
-	return dialer
 }
 
 func resolveIPv4WithTCPDNS(ctx context.Context, host string, servers []string, dialer *net.Dialer) ([]string, error) {

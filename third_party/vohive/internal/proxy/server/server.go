@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/1239t/vohive/internal/netbind"
 	"github.com/1239t/vohive/pkg/logger"
 	socks5 "github.com/things-go/go-socks5"
 )
@@ -114,25 +115,19 @@ func newSocks5Server(dialer *net.Dialer, stats *TrafficStats, authEnabled bool, 
 
 func newBoundDialer(id, iface string) *net.Dialer {
 	iface = strings.TrimSpace(iface)
-	return &net.Dialer{
-		Timeout: 30 * time.Second,
-		Control: func(network, address string, c syscall.RawConn) error {
-			if iface == "" {
-				return nil
-			}
-			var sockErr error
-			if err := c.Control(func(fd uintptr) {
-				sockErr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, iface)
-			}); err != nil {
-				return err
-			}
-			if sockErr != nil {
-				logger.Error(fmt.Sprintf("[%s] 绑定设备失败", id), "iface", iface, "err", sockErr)
-				return fmt.Errorf("SO_BINDTODEVICE(%s) 失败: %w", iface, sockErr)
-			}
-			return nil
-		},
+	dialer := &net.Dialer{Timeout: 30 * time.Second}
+	control := netbind.Control(iface)
+	if control == nil {
+		return dialer
 	}
+	dialer.Control = func(network, address string, raw syscall.RawConn) error {
+		if err := control(network, address, raw); err != nil {
+			logger.Error(fmt.Sprintf("[%s] 绑定设备失败", id), "iface", iface, "err", err)
+			return err
+		}
+		return nil
+	}
+	return dialer
 }
 
 func dialOutboundConn(ctx context.Context, dialer *net.Dialer, stats *TrafficStats, network, addr string) (net.Conn, error) {
