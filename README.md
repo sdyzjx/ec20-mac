@@ -1,4 +1,19 @@
-# EC20 macOS 第一阶段实验：用户态 AT 探针
+# EC20 macOS：Vohive 兼容驱动与应用
+
+本仓库的长期目标是交付兼容 Vohive 功能模型的原生 macOS 应用。实现按可验证阶段推进：先用
+普通用户态 `IOUSBHost` 服务验证 AT 与 ECM，再用 `USBSerialDriverKit` 提供正式串口，最终按
+功能需要实现 QMI 与 `NetworkingDriverKit` 数据面。
+
+当前状态仍是 **P0 用户态 AT 探针**，尚不是可安装驱动，也没有修改模块 USB 模式。
+
+设计与实施文档：
+
+- [总体架构](docs/architecture.md)
+- [Vohive 兼容契约](docs/vohive-compatibility.md)
+- [P0–P6 产品路线图](docs/roadmap.md)
+- [首轮实机记录](docs/experiment-2026-08-01.md)
+
+## 当前阶段：用户态 AT 探针
 
 这不是 Linux `option.c`/`GobiNet` 的直接移植，也还不是 DriverKit 驱动。它先用 macOS 的
 `IOUSBHost.framework` 在普通用户态独占打开 EC20 的 **USB 接口 2**，验证 macOS 到模块的
