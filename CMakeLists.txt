@@ -5,6 +5,28 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING
 
 project(ec20_at_probe LANGUAGES OBJC)
 
+add_library(ec20-usb-at STATIC
+    src/EC20USBATTransport.m
+)
+
+target_include_directories(ec20-usb-at PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+
+target_compile_options(ec20-usb-at PRIVATE
+    -fobjc-arc
+    -fblocks
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
+target_link_libraries(ec20-usb-at PUBLIC
+    "-framework Foundation"
+    "-framework IOKit"
+    "-framework IOUSBHost"
+)
+
 add_executable(ec20-at-probe
     src/ec20_at_probe.m
 )
@@ -18,9 +40,7 @@ target_compile_options(ec20-at-probe PRIVATE
 )
 
 target_link_libraries(ec20-at-probe PRIVATE
-    "-framework Foundation"
-    "-framework IOKit"
-    "-framework IOUSBHost"
+    ec20-usb-at
 )
 
 enable_testing()
