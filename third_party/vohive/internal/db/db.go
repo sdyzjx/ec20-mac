@@ -432,7 +432,10 @@ func UpsertSIMCardIdentity(iccid, imsi, operator string, currentIMEI *string) er
 		if imsi == "" {
 			return nil
 		}
-		return upsertSIMSubscriptionIdentity(tx, imsi, iccid, operator, now)
+		if err := upsertSIMSubscriptionIdentity(tx, imsi, iccid, operator, now); err != nil {
+			return err
+		}
+		return rekeySMSRowsForKnownICCID(tx, imsi, iccid)
 	})
 }
 

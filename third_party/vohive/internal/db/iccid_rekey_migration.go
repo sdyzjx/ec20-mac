@@ -14,6 +14,29 @@ import (
 // sms_delivery_part 不在此列：它无 imsi 列，经 message_id 关联 sms_delivery 间接获得 ICCID。
 var iccidReKeyTables = []string{"sms", "sms_contacts", "sms_delivery"}
 
+// rekeySMSRowsForKnownICCID converges rows written before SIM identity was
+// available. The fallback key is intentionally stable, so learning the real
+// ICCID can update all SMS views in the same transaction as the SIM mapping.
+func rekeySMSRowsForKnownICCID(tx *gorm.DB, imsi, iccid string) error {
+	imsi = strings.TrimSpace(imsi)
+	iccid = strings.TrimSpace(iccid)
+	if tx == nil || imsi == "" || iccid == "" || strings.HasPrefix(iccid, "reader-imsi-") {
+		return nil
+	}
+	fallback := "imsi:" + imsi
+	for _, table := range iccidReKeyTables {
+		if !tx.Migrator().HasTable(table) {
+			continue
+		}
+		if err := tx.Table(table).
+			Where("imsi = ? AND (iccid = ? OR iccid = '')", imsi, fallback).
+			Update("iccid", iccid).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // buildIMSIToICCIDMap 用 sim_cards 建立 IMSI→真实 ICCID 映射，排除 reader-imsi- 合成 ICCID。
 func buildIMSIToICCIDMap(tx *gorm.DB) (map[string]string, error) {
 	out := map[string]string{}

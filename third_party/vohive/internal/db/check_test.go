@@ -1,15 +1,21 @@
 package db
 
-import (
-	"fmt"
-	"testing"
-)
+import "testing"
 
 func TestCheckSchema(t *testing.T) {
-	Init("/root/.gemini/antigravity/vohive.db")
+	openTestDB(t)
 	var m []map[string]interface{}
-	DB.Raw("PRAGMA table_info(managed_devices)").Scan(&m)
+	if err := DB.Raw("PRAGMA table_info(devices)").Scan(&m).Error; err != nil {
+		t.Fatal(err)
+	}
+	foundIMEI := false
 	for _, row := range m {
-		fmt.Println(row["name"])
+		if row["name"] == "imei" {
+			foundIMEI = true
+			break
+		}
+	}
+	if !foundIMEI {
+		t.Fatalf("devices schema columns=%v, want imei", m)
 	}
 }

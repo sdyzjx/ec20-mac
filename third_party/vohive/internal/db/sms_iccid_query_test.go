@@ -138,6 +138,33 @@ func TestSaveSMSOrphanICCIDFallback(t *testing.T) {
 	}
 }
 
+func TestUpsertSIMCardIdentityRekeysEarlySMSRows(t *testing.T) {
+	openTestDB(t)
+	now := time.Now()
+	if err := SaveSMS("IMSI_LATE", "+10086", "", "early", 1, 0, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateSMSDelivery("late-map", "IMSI_LATE", "modem-1", "+10086", "out", 1, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertSIMCardIdentity("ICC_LATE", "IMSI_LATE", "Test", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	messages, err := GetSMSByICCIDAndPeer("ICC_LATE", "+10086", 10, nil, 0)
+	if err != nil || len(messages) != 1 {
+		t.Fatalf("rekeyed messages=%+v err=%v", messages, err)
+	}
+	contacts, err := GetSMSContactsByICCID("ICC_LATE", 10, nil, "")
+	if err != nil || len(contacts) != 1 {
+		t.Fatalf("rekeyed contacts=%+v err=%v", contacts, err)
+	}
+	delivery, err := GetSMSDeliveryStatus("late-map")
+	if err != nil || delivery.ICCID != "ICC_LATE" {
+		t.Fatalf("rekeyed delivery=%+v err=%v", delivery, err)
+	}
+}
+
 // 上行投递记录也要带 iccid，与 sms/sms_contacts 维度一致。
 func TestCreateSMSDeliveryPopulatesICCID(t *testing.T) {
 	openTestDB(t)
