@@ -7,12 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
-	"syscall"
+	"sync/atomic"
 	"time"
 	"unicode/utf16"
 
@@ -52,10 +49,11 @@ type commandRequest struct {
 // Manager 管理单个 EC20 模块的 AT 指令通信
 // 采用 channel-based 异步架构，参考 smsie 项目
 type Manager struct {
-	cfg      config.DeviceConfig
-	atPort   string
-	port     serial.Port
-	portMode *serial.Mode
+	cfg       config.DeviceConfig
+	atPort    string
+	port      serial.Port
+	portMode  *serial.Mode
+	portLease *serialPortLease
 
 	// 通道驱动的异步架构
 	stop        chan struct{}
@@ -72,10 +70,10 @@ type Manager struct {
 	reqPool sync.Pool
 
 	// 状态
-	running  bool
+	running  atomic.Bool
 	busy     bool
 	busyMu   sync.Mutex
-	healthy  bool
+	healthy  atomic.Bool
 	eofCount int // readLoop 中连续 EOF 计数，用于检测设备断开
 
 	atTimeoutMu     sync.Mutex
@@ -171,7 +169,6 @@ func New(cfg config.DeviceConfig) (*Manager, error) {
 		rxChan:       make(chan rxMsg, 100),
 		triggerChan:  make(chan struct{}, 1),
 		ready:        make(chan struct{}),
-		healthy:      true,
 		reassembler:  smscodec.NewReassembler(),
 		ussdChan:     make(chan USSDResult, 1),
 		apduSessions: make(map[int]apduSessionInfo),
@@ -184,6 +181,7 @@ func New(cfg config.DeviceConfig) (*Manager, error) {
 			},
 		},
 	}
+	m.healthy.Store(true)
 
 	// 如果未指定 AT 端口，使用 ManagePort
 	if m.atPort == "" {
@@ -217,96 +215,6 @@ func (m *Manager) WaitReady(timeout time.Duration) bool {
 	case <-m.stop:
 		return false
 	}
-}
-
-// forceReleasePort 检查端口是否被占用，如果是则杀掉占用者
-func (m *Manager) forceReleasePort(portPath string) {
-	// 设备文件不存在时 fuser 可能返回内核线程 PID，直接跳过避免误杀。
-	if _, err := os.Stat(portPath); err != nil {
-		return
-	}
-
-	// 先查询占用进程，再排除当前进程(及其线程)后定向释放，避免误杀自身。
-	out, _ := exec.Command("fuser", portPath).CombinedOutput()
-	if len(out) == 0 {
-		return
-	}
-
-	occupiedPIDs := parseFuserPIDs(string(out))
-	if len(occupiedPIDs) == 0 {
-		return
-	}
-
-	selfTaskPIDs := currentProcessTaskPIDSet()
-	released := make([]int, 0, len(occupiedPIDs))
-	skipped := make([]int, 0, len(occupiedPIDs))
-
-	for _, pid := range occupiedPIDs {
-		// 跳过内核关键进程: PID 1 (init/systemd), PID 2 (kthreadd)
-		if pid <= 2 {
-			skipped = append(skipped, pid)
-			continue
-		}
-		if _, isSelf := selfTaskPIDs[pid]; isSelf {
-			skipped = append(skipped, pid)
-			continue
-		}
-		if err := syscall.Kill(pid, syscall.SIGTERM); err == nil {
-			released = append(released, pid)
-		}
-	}
-
-	if len(skipped) > 0 {
-		logger.Warn(fmt.Sprintf("[%s] 端口被当前进程占用，跳过自杀式释放", m.cfg.ID), "port", portPath, "self_pids", skipped)
-	}
-	if len(released) > 0 {
-		logger.Warn(fmt.Sprintf("[%s] 检测到端口被外部进程占用，正在强制释放", m.cfg.ID), "port", portPath, "pids", released)
-		// 等待进程完全退出
-		time.Sleep(200 * time.Millisecond)
-	}
-}
-
-func parseFuserPIDs(raw string) []int {
-	// fuser 输出通常形如: "/dev/ttyUSB2: 1234 5678"
-	// 只解析冒号后的 PID，避免把设备名中的数字(如 ttyUSB2)误当作 PID。
-	if idx := strings.Index(raw, ":"); idx >= 0 && idx+1 < len(raw) {
-		raw = raw[idx+1:]
-	}
-	seen := make(map[int]struct{})
-	out := make([]int, 0)
-	fields := strings.FieldsFunc(raw, func(r rune) bool {
-		return r < '0' || r > '9'
-	})
-	for _, f := range fields {
-		pid, err := strconv.Atoi(strings.TrimSpace(f))
-		if err != nil || pid <= 0 {
-			continue
-		}
-		if _, ok := seen[pid]; ok {
-			continue
-		}
-		seen[pid] = struct{}{}
-		out = append(out, pid)
-	}
-	return out
-}
-
-func currentProcessTaskPIDSet() map[int]struct{} {
-	out := map[int]struct{}{
-		os.Getpid(): {},
-	}
-	entries, err := os.ReadDir("/proc/self/task")
-	if err != nil {
-		return out
-	}
-	for _, e := range entries {
-		pid, err := strconv.Atoi(strings.TrimSpace(e.Name()))
-		if err != nil || pid <= 0 {
-			continue
-		}
-		out[pid] = struct{}{}
-	}
-	return out
 }
 
 // SetSMSCallback 设置短信接收回调
@@ -452,7 +360,7 @@ func (m *Manager) recordATTimeout(req commandRequest) (int, bool) {
 }
 
 func (m *Manager) tripATTimeoutWatchdog(cmd string, failures int) {
-	if !m.running {
+	if !m.running.Load() {
 		return
 	}
 	logger.Warn(fmt.Sprintf("[%s] AT 连续超时达到阈值，触发控制面恢复", m.cfg.ID),
@@ -460,7 +368,7 @@ func (m *Manager) tripATTimeoutWatchdog(cmd string, failures int) {
 		"port", m.atPort,
 		"failures", failures,
 		"threshold", atTimeoutWatchdogThreshold)
-	m.healthy = false
+	m.healthy.Store(false)
 	m.Stop()
 	m.notifyDisconnect("at_timeout_threshold")
 }
@@ -469,7 +377,7 @@ func (m *Manager) tripATTimeoutWatchdog(cmd string, failures int) {
 func (m *Manager) Start() error {
 	if m.pureQMIBackend() {
 		logger.Info(fmt.Sprintf("[%s] 纯 QMI 模式，跳过 AT 管理器启动", m.cfg.ID), "at_port", m.atPort)
-		m.running = false
+		m.running.Store(false)
 		m.markReady()
 		return nil
 	}
@@ -477,10 +385,20 @@ func (m *Manager) Start() error {
 		return errors.New("AT port not configured")
 	}
 
-	// 检查并强制接管被占用的端口
-	m.forceReleasePort(m.atPort)
+	lease, err := acquireSerialPortLease(m.atPort, "manager:"+m.cfg.ID)
+	if err != nil {
+		return err
+	}
+	releaseLease := func() {
+		lease.Release()
+	}
 
-	var err error
+	if err := m.prepareSerialPortForOpen(m.atPort); err != nil {
+		releaseLease()
+		return fmt.Errorf("串口 %s 预检失败: %w", m.atPort, err)
+	}
+
+	err = nil
 	for attempt := 0; attempt < 8; attempt++ {
 		m.port, err = serial.Open(m.atPort, m.portMode)
 		if err == nil {
@@ -492,11 +410,18 @@ func (m *Manager) Start() error {
 		time.Sleep(time.Duration(80*(attempt+1)) * time.Millisecond)
 	}
 	if err != nil {
+		releaseLease()
 		return fmt.Errorf("打开串口 %s 失败: %w", m.atPort, err)
 	}
 
-	m.port.SetReadTimeout(100 * time.Millisecond)
-	m.running = true
+	if err := m.port.SetReadTimeout(100 * time.Millisecond); err != nil {
+		_ = m.port.Close()
+		m.port = nil
+		releaseLease()
+		return fmt.Errorf("配置串口 %s 读取超时失败: %w", m.atPort, err)
+	}
+	m.portLease = lease
+	m.running.Store(true)
 
 	// 启动读取协程
 	m.loopWG.Add(1)
@@ -556,12 +481,12 @@ func (m *Manager) handleFatalSerialRuntimeErr(err error, phase string, cmd strin
 	if !isFatalSerialRuntimeErr(err) {
 		return
 	}
-	if !m.running {
+	if !m.running.Load() {
 		return
 	}
 	logger.Warn(fmt.Sprintf("[%s] AT 串口运行期失效，触发恢复", m.cfg.ID),
 		"phase", phase, "cmd", cmd, "port", m.atPort, "err", err)
-	m.healthy = false
+	m.healthy.Store(false)
 	m.Stop()
 	m.notifyDisconnect("serial_runtime_error")
 }
@@ -574,7 +499,11 @@ func (m *Manager) Stop() {
 		if m.port != nil {
 			m.port.Close()
 		}
-		m.running = false
+		if m.portLease != nil {
+			m.portLease.Release()
+			m.portLease = nil
+		}
+		m.running.Store(false)
 	})
 }
 
@@ -1717,7 +1646,7 @@ func (m *Manager) executeAT(cmd string, timeout time.Duration, silent, highPrior
 	if !m.CanExecuteAT() {
 		return "", errors.New("AT 管理器未启动或不可用")
 	}
-	if !m.healthy {
+	if !m.healthy.Load() {
 		return "", errors.New("设备异常")
 	}
 
@@ -1792,7 +1721,7 @@ func (m *Manager) IsBusy() bool {
 
 // IsHealthy 返回健康状态
 func (m *Manager) IsHealthy() bool {
-	return m.healthy && m.running
+	return m.healthy.Load() && m.running.Load()
 }
 
 // HasATPort 返回当前管理器是否配置了可用的 AT 端口。
@@ -1807,7 +1736,7 @@ func (m *Manager) ATPort() string {
 
 // CanExecuteAT 返回当前管理器是否已启动，可接受 AT 命令。
 func (m *Manager) CanExecuteAT() bool {
-	return !m.pureQMIBackend() && m.HasATPort() && m.running
+	return !m.pureQMIBackend() && m.HasATPort() && m.running.Load()
 }
 
 func (m *Manager) SetAPDUArbiter(arbiter *apduarbiter.Arbiter) {

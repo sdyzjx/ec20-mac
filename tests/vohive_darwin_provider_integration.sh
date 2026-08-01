@@ -3,7 +3,7 @@
 # Exercise the first Vohive Darwin DeviceProvider slice against ec20d.  The
 # daemon is always in mock PTY mode, so this test cannot enumerate or write USB.
 
-set -u
+set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
@@ -60,7 +60,6 @@ trap 'exit 143' TERM
 "$EC20D_BIN" \
     --mock \
     --pty \
-    --max-requests 4 \
     --socket "$SOCKET_PATH" >"$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 
@@ -170,6 +169,10 @@ case "$pool_output" in
         ;;
 esac
 
+if ! kill -TERM "$DAEMON_PID" 2>/dev/null; then
+    echo "could not stop ec20d after the provider requests" >&2
+    exit 1
+fi
 if wait "$DAEMON_PID"; then
     daemon_status=0
 else

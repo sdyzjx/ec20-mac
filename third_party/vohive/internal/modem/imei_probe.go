@@ -118,6 +118,12 @@ func ProbeIMEI(atPort string, timeout time.Duration) (string, error) {
 		Parity:   serial.NoParity,
 	}
 
+	lease, err := acquireSerialPortLease(atPort, "imei-probe")
+	if err != nil {
+		return "", err
+	}
+	defer lease.Release()
+
 	p, err := serial.Open(atPort, mode)
 	if err != nil {
 		return "", err

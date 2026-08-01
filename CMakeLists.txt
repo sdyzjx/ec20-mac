@@ -181,6 +181,30 @@ if(EC20_GO_EXECUTABLE)
     set_tests_properties(ec20d-vohive-serial-integration PROPERTIES TIMEOUT 30)
 
     add_test(
+        NAME ec20d-vohive-manager-integration
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "EC20D_BIN=$<TARGET_FILE:ec20d>"
+            "EC20CTL_BIN=$<TARGET_FILE:ec20ctl>"
+            "GO_BIN=${EC20_GO_EXECUTABLE}"
+            "VOHIVE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/third_party/vohive"
+            /bin/sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/ec20d_vohive_manager_integration.sh"
+    )
+    set_tests_properties(ec20d-vohive-manager-integration PROPERTIES TIMEOUT 45)
+
+    add_test(
+        NAME vohive-darwin-modem-safety-unit
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "GOWORK=off"
+            "${EC20_GO_EXECUTABLE}" test -count=1
+                -run "^(TestSerialPortLease.*|TestIMEIProbeCannotOpenManagerLeasedPort|TestSerialATCannotOpenManagerLeasedPort|TestDarwin.*|TestIsRetryableSerialOpenErr|TestProbeIMEICached.*)$"
+                ./internal/modem
+    )
+    set_tests_properties(vohive-darwin-modem-safety-unit PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vohive"
+        TIMEOUT 60
+    )
+
+    add_test(
         NAME vohive-darwin-provider-unit
         COMMAND "${CMAKE_COMMAND}" -E env
             "GOWORK=off"
