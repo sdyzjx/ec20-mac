@@ -697,7 +697,8 @@ static BOOL WriteJSONResult(id result, NSError **error)
     NSError *jsonError = nil;
     NSData *json = [NSJSONSerialization dataWithJSONObject:result
                                                    options:(NSJSONWritingPrettyPrinted |
-                                                            NSJSONWritingSortedKeys)
+                                                            NSJSONWritingSortedKeys |
+                                                            NSJSONWritingWithoutEscapingSlashes)
                                                      error:&jsonError];
     if (json == nil) {
         AssignError(error,

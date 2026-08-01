@@ -47,6 +47,26 @@ target_link_libraries(ec20-ipc PUBLIC
     "-framework Foundation"
 )
 
+add_library(ec20-pty STATIC
+    src/EC20PTYBridge.m
+)
+
+target_include_directories(ec20-pty PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+
+target_compile_options(ec20-pty PRIVATE
+    -fobjc-arc
+    -fblocks
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
+target_link_libraries(ec20-pty PUBLIC
+    "-framework Foundation"
+)
+
 add_executable(ec20-at-probe
     src/ec20_at_probe.m
 )
@@ -77,6 +97,7 @@ target_compile_options(ec20d PRIVATE
 
 target_link_libraries(ec20d PRIVATE
     ec20-ipc
+    ec20-pty
     ec20-usb-at
 )
 
@@ -94,6 +115,16 @@ target_compile_options(ec20ctl PRIVATE
 
 target_link_libraries(ec20ctl PRIVATE
     ec20-ipc
+)
+
+add_executable(ec20-pty-smoke
+    tests/ec20_pty_smoke.m
+)
+
+target_compile_options(ec20-pty-smoke PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
 )
 
 add_executable(ec20-ipc-protocol-tests
@@ -125,3 +156,27 @@ add_test(
         /bin/sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/ec20d_mock_integration.sh"
 )
 set_tests_properties(ec20d-mock-integration PROPERTIES TIMEOUT 20)
+add_test(
+    NAME ec20d-pty-mock-integration
+    COMMAND "${CMAKE_COMMAND}" -E env
+        "EC20D_BIN=$<TARGET_FILE:ec20d>"
+        "EC20CTL_BIN=$<TARGET_FILE:ec20ctl>"
+        "EC20_PTY_SMOKE_BIN=$<TARGET_FILE:ec20-pty-smoke>"
+        /bin/sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/ec20d_pty_integration.sh"
+)
+set_tests_properties(ec20d-pty-mock-integration PROPERTIES TIMEOUT 20)
+
+# Keep the core build usable without Go, while automatically exercising the
+# exact serial package used by Vohive whenever a Go toolchain is available.
+find_program(EC20_GO_EXECUTABLE NAMES go)
+if(EC20_GO_EXECUTABLE)
+    add_test(
+        NAME ec20d-vohive-serial-integration
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "EC20D_BIN=$<TARGET_FILE:ec20d>"
+            "EC20CTL_BIN=$<TARGET_FILE:ec20ctl>"
+            "GO_BIN=${EC20_GO_EXECUTABLE}"
+            /bin/sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/ec20d_vohive_serial_integration.sh"
+    )
+    set_tests_properties(ec20d-vohive-serial-integration PROPERTIES TIMEOUT 30)
+endif()
