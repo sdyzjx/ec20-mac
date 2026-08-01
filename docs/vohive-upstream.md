@@ -209,12 +209,14 @@ make frontend-dist
 
 `web/dist` 是 Vite 的第一阶段产物，`internal/web/dist` 才是 `go:embed` 实际读取的位置。两者都是
 生成物，默认不应提交；打包/CI 应从 `web/package-lock.json` 重建并在 backend build 之前检查
-目录存在。即使前端准备完成，当前上游仍不能原样通过 Darwin backend build。
+目录存在。即使前端准备完成，固定上游仍不能**原样**通过 Darwin backend build；本仓库通过
+`ae5894b` 及后续 Darwin provider 补丁解决了当前已知编译阻塞，构建入口见
+[Vohive Darwin 后端构建说明](vohive-darwin-build.md)。
 
-## 8. 当前 Darwin 已知阻塞
+## 8. 固定上游的 Darwin 阻塞与本地处理状态
 
-以下是固定上游在 macOS/Darwin 上的已知阻塞，不是完整清单。准备好前端资源后，可用下面的
-命令重现 backend 编译门禁：
+以下是固定上游在 macOS/Darwin 上的已知阻塞，不是完整清单。准备好前端资源并应用本仓库本地
+补丁后，下面的 backend 编译门禁现在可以通过：
 
 ```sh
 cd third_party/vohive
@@ -230,12 +232,21 @@ Linux `syscall.SO_BINDTODEVICE`，该常量和语义在 Darwin 不存在，造�
 平台文件/build tags，并使用按地址族的 `IP_BOUND_IF`/`IPV6_BOUND_IF` 及 interface index；绑定
 失败必须 fail closed，不能静默从 Wi-Fi 出口发送。
 
+本地状态：`ae5894b` 新增 `internal/netbind`，三处调用均已迁移；Darwin lo0 的 IPv4/IPv6
+getsockopt 测试和 Linux 交叉编译通过。这解决了 socket binding 编译与基础语义，不代表蜂窝
+`enX`、DNS 和路由控制已经完成。
+
 ### 8.2 `swu-go` 的 Linux error queue
 
 间接依赖 `github.com/1239t/swu-go v0.0.3` 的 IPsec 代码使用 Linux `MSG_ERRQUEUE` 机制，包括
 `unix.SockExtendedErr`、`IP_RECVERR`、`IPV6_RECVERR` 和 `syscall.MSG_ERRQUEUE`。这些符号在
 Darwin 不可用，当前会阻断编译。需要由依赖提供 Darwin build tags/实现，或在 macOS 能力矩阵中
 明确隔离依赖该路径的 VoWiFi/IPsec 功能；不能用空成功实现掩盖功能缺失。
+
+本地状态：仓库固定导入 `swu-go` v0.0.3（上游
+`c4fb4016432c3851d2f4e6ba44261368b01a2be3`），并以 build tag 隔离 Linux error queue。
+非 Linux 明确没有可选 PMTU/ICMP error-queue listener；Darwin 可以编译，但 VoWiFi/IPsec 不因此
+变成完整支持。来源和许可证见 [构建说明](vohive-darwin-build.md)。
 
 ### 8.3 udev/netlink 与 sysfs
 
@@ -248,6 +259,10 @@ Darwin 没有对应常量或事件源。`internal/device/discovery_compat.go` �
 Darwin 端必须以 build tags 隔离这些文件，并通过 IOKit/IORegistry 或本项目 `ec20d` 的版本化
 API 实现 device snapshot/watch；不要在 macOS 伪造 `/sys`、udev 或 `/dev/cdc-wdm*`。
 
+本地状态：udev loop 已按平台隔离；`fbd8d42` 把认证的 `ec20d` snapshot 注入
+`CompatibleModem`、Pool 和 API。当前仍是按完整 snapshot 重扫，没有实现 `devices.watch` 或连续
+IOKit hot-plug event stream。
+
 ### 8.4 QMI holder 与端口强制释放
 
 `internal/qmi/control_device_holders_linux.go` 同时承载 Linux holder 检测和若干共享类型，Darwin
@@ -257,6 +272,9 @@ Darwin 明确实现安全行为。
 `internal/modem/manager.go` 的端口释放逻辑依赖 `fuser`、`/proc` 和向占用 PID 发送信号。macOS
 成品不应照搬“扫描后杀掉外部进程”的策略；PTY 所有权必须由 Host App/daemon lease 协调，冲突
 时 fail closed 并提示用户，不能为抢占串口终止不相关进程。
+
+本地状态：QMI holder 的共享类型和平台实现已经拆分，Darwin 编译通过；`forceReleasePort` 的
+`fuser`/`/proc`/kill 行为尚未平台化，是启动真实 Darwin Worker 前的明确阻塞项。
 
 ### 8.5 数据面、音频与系统集成
 
@@ -270,5 +288,6 @@ Darwin 明确实现安全行为。
 VoWiFi stub 不能算完整支持；要达到 Vohive 全功能，仍需真实的 Darwin 用户态 IPsec/ESP 网络栈，
 不能用返回成功的空实现掩盖能力缺口。
 
-在这些平台边界完成前，`third_party/vohive` 只是固定、可审计的上游基线，不能宣称已经是可用的
-macOS Vohive 应用。
+当前本地补丁已能生成 Darwin arm64/amd64 完整后端 Mach-O，并接通 metadata 设备池；但在上述
+运行时平台边界完成前，它仍只是可审计的 bring-up 后端，不能宣称已经是可分发或 Vohive 全功能
+兼容的 macOS 应用。
