@@ -255,6 +255,19 @@ static BOOL ContainsSMSSubmitReference(NSData *data)
     return NO;
 }
 
+static BOOL ShouldReturnPTYTransportResponse(BOOL succeeded,
+                                             BOOL terminalError,
+                                             BOOL staleInputOverflow,
+                                             BOOL requireSMSSubmitReference,
+                                             NSData *response)
+{
+    if ((!succeeded && !terminalError) || staleInputOverflow) {
+        return NO;
+    }
+    return !requireSMSSubmitReference || !succeeded ||
+           ContainsSMSSubmitReference(response);
+}
+
 static NSString *ATCommandPolicyFailure(NSString *command,
                                         BOOL allowArbitraryAT,
                                         BOOL *deniedByAllowlist)
@@ -658,8 +671,11 @@ static void RemoveSocketIfIdentityMatches(const char *path,
                          terminalState == EC20USBATTerminalError &&
                          [transportError.domain isEqualToString:EC20USBATTransportErrorDomain] &&
                          transportError.code == EC20USBATTransportErrorModem;
-    if ((!succeeded && !terminalError) || staleInputOverflow ||
-        (succeeded && !ContainsSMSSubmitReference(response))) {
+    if (!ShouldReturnPTYTransportResponse(succeeded,
+                                          terminalError,
+                                          staleInputOverflow,
+                                          NO,
+                                          response)) {
         return nil;
     }
     if (response == nil) {
@@ -726,7 +742,11 @@ static void RemoveSocketIfIdentityMatches(const char *path,
                          terminalState == EC20USBATTerminalError &&
                          [transportError.domain isEqualToString:EC20USBATTransportErrorDomain] &&
                          transportError.code == EC20USBATTransportErrorModem;
-    if ((!succeeded && !terminalError) || staleInputOverflow) {
+    if (!ShouldReturnPTYTransportResponse(succeeded,
+                                          terminalError,
+                                          staleInputOverflow,
+                                          YES,
+                                          response)) {
         return nil;
     }
     if (response == nil) {
@@ -1581,6 +1601,20 @@ static BOOL RunSelfTests(NSError **error)
                         ATCommandPolicyFailure(@"AT+CFUN=1,1", NO, NULL) != nil,
                         @"The arbitrary-AT prefix guard self-test failed.",
                         error)) {
+        return NO;
+    }
+
+    NSData *plainOK = [@"\r\nOK\r\n" dataUsingEncoding:NSASCIIStringEncoding];
+    NSData *smsOK = [@"\r\n+CMGS: 7\r\n\r\nOK\r\n"
+        dataUsingEncoding:NSASCIIStringEncoding];
+    if (!SelfTestAssert(
+            ShouldReturnPTYTransportResponse(YES, NO, NO, NO, plainOK) &&
+            !ShouldReturnPTYTransportResponse(YES, NO, NO, YES, plainOK) &&
+            ShouldReturnPTYTransportResponse(YES, NO, NO, YES, smsOK) &&
+            ShouldReturnPTYTransportResponse(NO, YES, NO, YES, plainOK) &&
+            !ShouldReturnPTYTransportResponse(NO, NO, NO, NO, plainOK),
+            @"PTY transport response classification self-test failed.",
+            error)) {
         return NO;
     }
 
