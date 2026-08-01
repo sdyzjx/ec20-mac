@@ -147,7 +147,8 @@ GOWORK=off go test -race -count=1 \
   ./internal/api
 ```
 
-仓库当前 CTest 为 10/10；功能相关定向 race/vet 通过。固定上游的完整 `internal/modem` 测试另有
+仓库当前 CTest 为 12/12；功能相关定向 race/vet 通过，其中真实 `modem.Manager` 对合成 PTY 的
+启动/停止生命周期也在 race detector 下执行。固定上游的完整 `internal/modem` 测试另有
 3 个既存 SIM metadata 预期失败，与本轮 Darwin 修改无关，不能把定向通过写成“全量 Go 测试
 通过”。
 
@@ -160,6 +161,7 @@ GOWORK=off go test -race -count=1 \
 - 正确区分 provider 失败与成功空快照；
 - 使用 fail-closed Darwin socket/interface binding 代码；
 - 在显式要求 IMEI 时进行受串行仲裁、attachment-scoped 的只读探测。
+- 在 Darwin 上以字符设备预检、进程内 lease 和 serial-open 错误取代 `fuser`/kill takeover。
 
 它目前不能作为完整 macOS 应用交付，缺少：
 

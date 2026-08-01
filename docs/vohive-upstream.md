@@ -273,8 +273,9 @@ Darwin 明确实现安全行为。
 成品不应照搬“扫描后杀掉外部进程”的策略；PTY 所有权必须由 Host App/daemon lease 协调，冲突
 时 fail closed 并提示用户，不能为抢占串口终止不相关进程。
 
-本地状态：QMI holder 的共享类型和平台实现已经拆分，Darwin 编译通过；`forceReleasePort` 的
-`fuser`/`/proc`/kill 行为尚未平台化，是启动真实 Darwin Worker 前的明确阻塞项。
+本地状态：QMI holder 的共享类型和平台实现已经拆分，Darwin 编译通过。`7753554` 进一步把
+Manager 端口预检按平台拆分：Darwin 不调用 `fuser`、不读取 `/proc`、不向占用者发送信号，并让
+Manager/IMEI probe/SerialAT 共用进程内 lease。跨进程单实例仍须由 Host App/ec20d 保证。
 
 ### 8.5 数据面、音频与系统集成
 

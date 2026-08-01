@@ -114,9 +114,9 @@ Pool 只把 attachment key 和 PTY path 写入 Worker 的运行时 `DeviceConfig
 - 所有 IMEI cache miss 的实际串口探测在进程内全局串行，并在获得锁后复查缓存；
 - 缓存键使用 `attachment key + PTY path`，不会因动态 PTY 编号被新 attach 复用而返回旧 IMEI。
 
-旧 Linux/无 attachment 调用仍保留 port-only API 兼容行为。这个门禁只覆盖发现期 IMEI 探测；
-真正启动 `modem.Manager` 前，还必须把 Darwin 的端口占用策略从 `fuser`/`/proc`/kill 改为
-fail-closed lease，避免为了抢占 PTY 终止其他进程。
+旧 Linux/无 attachment 调用仍保留 port-only API 兼容行为。`7753554` 进一步让 Manager、IMEI
+probe 和 `SerialAT` 共用进程内 port lease，并把 Darwin 的 `fuser`/`proc`/kill takeover 改为
+字符设备预检 + serial open fail closed。跨进程独占仍须由 Host App/ec20d 生命周期保证。
 
 ## 5. Pool 与 HTTP 语义
 
@@ -161,17 +161,22 @@ GOWORK=off go run ./cmd/vohive-darwin-probe \
 capability。它不输出 IMEI、firmware 或 control path；但 attachment key 和 PTY path 仍是本地运行期
 诊断信息，不应发布到不受信任的日志。
 
-mock integration 启动 `ec20d --mock --pty --max-requests 4`，先测直接 snapshot，再测 Pool 映射。
+mock integration 启动 `ec20d --mock --pty`，先测直接 snapshot，再测 Pool 映射，完成后显式停止
+daemon。
 CTest 当前包括：
 
 ```text
 vohive-darwin-provider-unit
 vohive-darwin-device-provider-unit
 vohive-darwin-provider-integration
+ec20d-vohive-manager-integration
+vohive-darwin-modem-safety-unit
 ```
 
-完整根测试结果为 10/10。相关 provider/Pool/API、deadline、attachment cache 和并发门禁通过 race
-测试及 vet；Darwin arm64/amd64 与 Linux amd64 后端均完成构建回归。
+Provider harness 现在显式停止 daemon，不再使用 request 数量触发退出，避免最后一个 response 与
+PTY `lstat` 认证竞态。完整根测试结果为 12/12。相关 provider/Pool/API、deadline、attachment
+cache、Manager 生命周期和并发门禁通过 race 测试及 vet；Darwin arm64/amd64 与 Linux amd64
+后端均完成构建回归。
 
 ### 6.1 实机 metadata-only 结果
 
@@ -200,7 +205,7 @@ SOCKET_PATH="$SOCKET_DIR/ec20d.sock"
 
 ## 7. 尚未完成
 
-- Darwin `modem.Manager` 的安全端口 lease 与完整 PTY 生命周期；
+- Darwin Manager 的真实 EC20/Worker 生命周期与跨进程单实例 lease；
 - 连续 USB reader、URC、来电、入短信、USSD、短信 prompt/Ctrl-Z transaction；
 - daemon restart/拔插 watcher 与不中断恢复；
 - ECM/MBIM controller、地址/DNS/路由观察与端到端代理出口；
@@ -208,6 +213,6 @@ SOCKET_PATH="$SOCKET_DIR/ec20d.sock"
 - CoreAudio 语音路径及 VoWiFi/IPsec 的真实 Darwin 实现；
 - Vohive UI 的 capability 呈现、Host App、launchd、签名、公证与 DriverKit entitlement。
 
-下一步应先平台化 `forceReleasePort` 并用 mock PTY 完成 Manager 级 `AT`/`AT+CGSN` 生命周期测试，
-再在明确授权的实机门禁下做只读 Manager 测试。连续 URC 与短信 transaction 必须单独设计，不能用
-一次 `AT` smoke 代替。
+下一步应为连续 reader、URC 与短信 transaction 建立 deterministic mock，再在明确授权的实机
+门禁下做 Manager 测试。真实 Manager 初始化会发送易恢复但会改变会话状态的 AT 配置，具体安全
+边界见 [Darwin Manager 文档](vohive-darwin-manager.md)。

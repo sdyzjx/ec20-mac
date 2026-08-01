@@ -9,8 +9,9 @@
 Vohive 使用的 `go.bug.st/serial` v1.6.4 已通过 mock 和 EC20 实机 `AT` 验证，Darwin provider
 现已接入 `CompatibleModem`、`Pool`、`/api/devices/discovered` 和 Darwin 后端入口，并在实机
 完成 metadata-only Pool 发现。完整 Vohive 后端可构建为 arm64/amd64 Mach-O，但它仍不是可安装
-的 `.app`/DriverKit 驱动；Manager 实机、连续 URC、短信/通话和 ECM/QMI 数据面尚未完成，也没有
-修改模块当前的 `usbnet=0`。
+的 `.app`/DriverKit 驱动。`modem.Manager` 已在合成 PTY 上通过 race 检测的完整生命周期，Darwin
+不会再使用 `fuser`/kill 抢占端口；Manager 实机、连续 URC、短信/通话和 ECM/QMI 数据面尚未完成，
+也没有修改模块当前的 `usbnet=0`。
 
 设计与实施文档：
 
@@ -23,6 +24,7 @@ Vohive 使用的 `go.bug.st/serial` v1.6.4 已通过 mock 和 EC20 实机 `AT` �
 - [Vohive 上游固定、同步与许可证](docs/vohive-upstream.md)
 - [Vohive Darwin HardwareProvider 与 Pool 接入](docs/vohive-darwin-provider.md)
 - [Vohive Darwin 后端构建与依赖](docs/vohive-darwin-build.md)
+- [Vohive Darwin Manager 串口所有权与 mock 生命周期](docs/vohive-darwin-manager.md)
 
 ## 当前阶段：用户态 AT、PTY 与 Vohive Darwin Provider
 
@@ -57,7 +59,8 @@ attach 的 IORegistry ID，之后每条命令都按该 ID 重新匹配；模块�
 
 Vohive 的默认 discovery 只读取 metadata；显式请求 `?with_imei=1` 或启动已配置 AT 设备时会短暂
 发送只读 `AT`/`AT+CGSN`。该路径使用 attachment-scoped 缓存并串行化 cache miss，但尚未完成
-Darwin `modem.Manager` 的安全端口 lease，因此本轮没有在实机启动完整 Worker。
+跨进程的强制独占。Darwin Manager、IMEI probe 和 `SerialAT` 已共用进程内 port lease；本轮只在
+mock PTY 启动完整 Manager，没有在实机启动 Worker。
 
 ## 使用 data 硬盘上的 Xcode 构建
 
