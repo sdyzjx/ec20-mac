@@ -255,6 +255,26 @@ if [ "$attempt" -ge 100 ]; then
     fail "managed Darwin mock device never became visible"
 fi
 
+# The add response can precede Manager's asynchronous identity collection.
+# Require the public overview cache to converge, as the device detail page
+# relies on this response rather than the raw discovery object.
+attempt=0
+while [ "$attempt" -lt 120 ]; do
+    OVERVIEW_RESPONSE=$(curl -fsS --max-time 5 \
+        -H "Authorization: Bearer $TOKEN" \
+        "$BASE_URL/api/devices/ec20-mock/overview") ||
+        fail "managed device overview failed"
+    case "$OVERVIEW_RESPONSE" in
+        *'"id":"ec20-mock"'*'"imei":"867530900000001"'*) break ;;
+    esac
+    attempt=$((attempt + 1))
+    sleep 0.05
+done
+if [ "$attempt" -ge 120 ]; then
+    printf '%s\n' "$OVERVIEW_RESPONSE" >&2
+    fail "managed device overview did not converge to the mock IMEI"
+fi
+
 AT_RESPONSE=$(curl -fsS --max-time 10 \
     -H "Authorization: Bearer $TOKEN" \
     -H 'Content-Type: application/json' \
