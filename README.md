@@ -20,6 +20,7 @@ Vohive 使用的 `go.bug.st/serial` v1.6.4 已通过 mock 和 EC20 实机 `AT` �
 - [Vohive 兼容契约](docs/vohive-compatibility.md)
 - [P0–P6 产品路线图](docs/roadmap.md)
 - [P1 ec20d 使用、协议与限制](docs/p1-ec20d.md)
+- [Vohive Darwin 真实 EC20 接入实验](docs/experiment-vohive-real-2026-08-01.md)
 - [首轮实机记录](docs/experiment-2026-08-01.md)
 - [P1 daemon/PTY 实机记录](docs/experiment-p1-2026-08-01.md)
 - [Vohive 上游固定、同步与许可证](docs/vohive-upstream.md)
