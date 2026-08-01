@@ -145,14 +145,15 @@ GOWORK=off go test -race -count=1 \
   ./internal/modem \
   ./internal/device \
   ./internal/api
+
+GOWORK=off go test ./...
 ```
 
 仓库当前 CTest 为 13/13；新增项会构建完整 Darwin Vohive、启动 mock `ec20d`，并验证嵌入式 Web
 与 API 的登录、发现、添加、overview 身份收敛、AT 和删除流程。功能相关定向 race/vet 通过，其中
-真实 `modem.Manager` 对合成 PTY 的启动/停止生命周期也在 race detector 下执行。固定上游的完整
-`internal/modem` 测试另有
-3 个既存 SIM metadata 预期失败，与本轮 Darwin 修改无关，不能把定向通过写成“全量 Go 测试
-通过”。
+真实 `modem.Manager` 对合成 PTY 的启动/停止生命周期也在 race detector 下执行。三个 SIM/MBIM
+测试和一个 eSIM 测试原先使用了与断言不一致的合成 IMSI/IMEI；`52513aa` 只修正测试夹具，不改
+生产解析逻辑。修正后 `GOWORK=off go test ./...` 在 Darwin 全量通过。
 
 ## 6. 这个产物现在能做什么
 

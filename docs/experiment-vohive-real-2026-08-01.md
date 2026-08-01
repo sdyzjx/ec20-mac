@@ -64,8 +64,8 @@ Vohive 设备列表报告 Worker `running=true`、`healthy=true`、
 - `usbnet` 保持 `0`，interface 4 始终未打开。
 
 自动回归证据：CMake/CTest 13/13 通过，其中 Web 集成测试会从 `/api/sms/send` 穿过完整
-mock prompt/Ctrl-Z 事务；Vohive SMS 相关 Go 包定向测试通过。上游 `go test ./...` 仍有与本次
-功能无关的既存测试桩/数据库初始化失败，不能据此宣称全仓 Go 测试已清零。
+mock prompt/Ctrl-Z 事务；Vohive SMS 相关 Go 包定向测试通过。后续 `52513aa` 修正四处与断言
+矛盾的合成身份测试夹具后，`GOWORK=off go test ./...` 已在 Darwin 全量通过。
 
 ## 已发现的边界
 

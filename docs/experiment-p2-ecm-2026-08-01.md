@@ -81,6 +81,7 @@ PTY 后再释放；Vohive 仍以 attachment key 和 generation 判定是否重�
 - ECM live test 同时覆盖真实接口成功与不存在接口 fail-closed；
 - `internal/device` 完整包测试通过；
 - `cmd/vohive-darwin-probe` 通过。
+- `GOWORK=off go test ./...` 在 Darwin 全量通过。
 
 这些结果证明单模块重启恢复，不等于 P2 的 20 次重连、10 次拔插/重启长稳门槛已经完成。
 
