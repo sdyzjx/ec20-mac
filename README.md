@@ -4,13 +4,15 @@
 普通用户态 `IOUSBHost` 服务验证 AT 与 ECM，再用 `USBSerialDriverKit` 提供正式串口，最终按
 功能需要实现 QMI 与 `NetworkingDriverKit` 数据面。
 
-当前状态仍是 **P0 用户态 AT 探针**，尚不是可安装驱动，也没有修改模块 USB 模式。
+当前状态是 **P1 用户态服务切片**：P0 探针仍保留，新增了可复用 USB AT transport、版本化
+Unix socket daemon `ec20d` 和客户端 `ec20ctl`。它尚不是可安装驱动，也没有修改模块 USB 模式。
 
 设计与实施文档：
 
 - [总体架构](docs/architecture.md)
 - [Vohive 兼容契约](docs/vohive-compatibility.md)
 - [P0–P6 产品路线图](docs/roadmap.md)
+- [P1 ec20d 使用、协议与限制](docs/p1-ec20d.md)
 - [首轮实机记录](docs/experiment-2026-08-01.md)
 
 ## 当前阶段：用户态 AT 探针
