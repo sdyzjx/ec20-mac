@@ -1,8 +1,9 @@
 # Vohive Darwin 连续 URC mock 注入与安全边界
 
 状态：`ec20d --mock --pty` 已能在命令响应之外注入一条主动上报记录；Vohive 的真实
-`modem.Manager` 已在 race detector 下收到 `+CPIN: READY` 并触发 SIM status callback。出站短信
-prompt/Ctrl-Z transaction 已另行完成；尚未覆盖 `+CMTI` 短信读取、`+CUSD` 会话和 `RING/+CLIP`。
+`modem.Manager` 已在 race detector 下通过 `+CPIN: READY`、`+CMTI`、`+CUSD`、`RING/+CLIP`
+和 `NO CARRIER` 字节路径。出站短信 prompt/Ctrl-Z transaction 也已完成。这些业务 URC
+仍需要真实网络和第二台终端的实机验收。
 
 相关提交：`0414bab`。
 
@@ -70,9 +71,11 @@ ctest --test-dir build \
 
 根 CTest 仍为 13/13；本次增强了既有 Manager integration，而不是增加一个只调用 parser 的测试。
 
-## 5. 下一步
+## 5. 已闭环的 deterministic 业务门
 
-1. `+CUSD`：发送 USSD 命令后注入响应，验证 waiter channel、取消和超时；
-2. `+CMTI`：提供 `AT+CMGR`/`AT+CMGD` fixture，验证存储区与短信入库；
-3. `RING/+CLIP/NO CARRIER`：验证来电 callback 状态机；
-4. 完成 deterministic mock 后，在明确授权、单客户端条件下执行真实入站 URC 测试。
+1. `+CUSD`：Web API 发送 USSD 后注入响应，验证 waiter channel 和 JSON 结果；
+2. `+CMTI`：mock `AT+CPMS`/`AT+CMGR`/`AT+CMGD`，验证存储区切换、PDU 解码和 SMS callback；
+3. `RING/+CLIP/NO CARRIER`：验证来电、号码和挂断 callback；
+4. race detector 发现并修复了运行中设置 `smsCallback` 与入站处理并发读取的竞态。
+
+下一步是在明确授权、单客户端和第二台电话配合下执行真实入站 URC 测试。

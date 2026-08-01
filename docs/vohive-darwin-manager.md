@@ -107,5 +107,5 @@ echo、短信格式/通知和来电/UAC 上报设置，因此后续实机回归�
 已确认 Worker 健康启动、自动选网、LTE 漫游注册和 `AT+CGATT: 1`；实验证据见
 [真实 EC20 接入记录](experiment-vohive-real-2026-08-01.md)。
 
-出站 `>` prompt/Ctrl-Z transaction 已自动和实机通过。接下来在已经成立的连续
-reader/URC 注入门上分别验证 `+CMTI`、`+CUSD` 和 `RING/+CLIP`。
+出站 `>` prompt/Ctrl-Z transaction 已自动和实机通过。连续 reader/URC 注入门也已覆盖
+`+CMTI`、`+CUSD`、`RING/+CLIP` 和 `NO CARRIER`；剩余门禁是真实网络与第二台电话的实机触发。

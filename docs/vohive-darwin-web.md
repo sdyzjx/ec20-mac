@@ -125,6 +125,6 @@ npm run build
 - 代理、流量、VoWiFi 与通话功能没有 Darwin 实机证据；
 - 仍是 ad-hoc Mach-O，不是 `.app`，没有 launchd、Developer ID、公证或 DriverKit entitlement。
 
-连续 URC 的 mock-only 注入门已通过 `+CPIN: READY` callback，出站 SMS transaction 也已通过。
-下一切片继续覆盖入站 SMS/USSD/来电 transaction。网络能力仍优先验证 ECM，失败后再
+连续 URC 的 mock-only 注入门已通过入站 SMS、USSD 和来电 callback，其中 USSD 结果穿过
+完整 Web API。出站 SMS transaction 也已通过。下一切片进入真实网络门禁。网络能力仍优先验证 ECM，失败后再
 进入 QMI/NetworkingDriverKit 数据面。
