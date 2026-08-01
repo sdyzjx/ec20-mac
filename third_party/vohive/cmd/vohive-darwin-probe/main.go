@@ -29,6 +29,7 @@ type poolDiagnosticDevice struct {
 	ProductIDHex   string `json:"product_id_hex"`
 	DriverName     string `json:"driver_name"`
 	Path           string `json:"path"`
+	InterfaceName  string `json:"interface_name,omitempty"`
 	Mode           string `json:"mode"`
 	NetworkCapable bool   `json:"network_capable"`
 }
@@ -80,8 +81,8 @@ func run(arguments []string, stdout, stderr *os.File) int {
 		}
 		fmt.Fprintf(stdout, "vohive Darwin pool: %d device(s)\n", len(diagnostic.Devices))
 		for _, modem := range diagnostic.Devices {
-			fmt.Fprintf(stdout, "attachment=%s at=%s driver=%s mode=%s network=%t\n",
-				modem.AttachmentKey, modem.Path, modem.DriverName, modem.Mode, modem.NetworkCapable)
+			fmt.Fprintf(stdout, "attachment=%s at=%s interface=%s driver=%s mode=%s network=%t\n",
+				modem.AttachmentKey, modem.Path, modem.InterfaceName, modem.DriverName, modem.Mode, modem.NetworkCapable)
 		}
 		return 0
 	}
@@ -133,6 +134,7 @@ func newPoolDiagnosticSnapshot(snapshot device.HardwareSnapshot) poolDiagnosticS
 			ProductIDHex:   fmt.Sprintf("%04x", modem.ProductID),
 			DriverName:     modem.DriverName,
 			Path:           modem.ATPort,
+			InterfaceName:  modem.NetInterface,
 			Mode:           modem.Mode,
 			NetworkCapable: modem.NetworkCapable,
 		}

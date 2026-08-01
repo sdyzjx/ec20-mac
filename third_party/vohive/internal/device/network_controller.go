@@ -15,6 +15,15 @@ type NetworkController interface {
 	GetPublicIPv4AndV6NoCache() (publicV4 string, publicV6 string)
 }
 
+type externallyManagedNetworkController interface {
+	ExternallyManaged() bool
+}
+
+func networkControllerIsExternallyManaged(controller NetworkController) bool {
+	managed, ok := controller.(externallyManagedNetworkController)
+	return ok && managed.ExternallyManaged()
+}
+
 var (
 	_ NetworkController = (*qmicore.Manager)(nil)
 	_ NetworkController = (*mbimcore.Manager)(nil)

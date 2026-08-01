@@ -326,6 +326,10 @@ func validatedPTYDevices(snapshot Snapshot, epoch string, verifyPTY func(string)
 			return nil, fmt.Errorf("ec20d returned duplicate PTY path %q", *device.AT.Path)
 		}
 		seenPaths[*device.AT.Path] = struct{}{}
+		network, err := validatedPTYNetwork(device)
+		if err != nil {
+			return nil, fmt.Errorf("ec20d PTY %q has invalid network mapping: %w", device.InstanceID, err)
+		}
 		devices = append(devices, PTYDevice{
 			InstanceID:    device.InstanceID,
 			Generation:    device.Generation,
@@ -334,9 +338,53 @@ func validatedPTYDevices(snapshot Snapshot, epoch string, verifyPTY func(string)
 			RegistryID:    device.USB.RegistryID,
 			Path:          *device.AT.Path,
 			Ownership:     device.AT.Ownership,
+			Network:       network,
 		})
 	}
 	return devices, nil
+}
+
+func validatedPTYNetwork(device Device) (*PTYNetwork, error) {
+	mode := strings.ToLower(strings.TrimSpace(device.Network.Mode))
+	if mode == "" || mode == "unknown" {
+		if device.Network.InterfaceName != nil || device.Network.InterfaceIndex != nil ||
+			device.Network.DataPlane != nil || device.Network.ManagedBy != nil ||
+			contains(device.Capabilities, "network.ecm") {
+			return nil, fmt.Errorf("unknown mode contains active data-plane fields")
+		}
+		return nil, nil
+	}
+	if mode != "ecm" || device.Network.DataPlane == nil ||
+		*device.Network.DataPlane != "ethernet" || device.Network.ControlPlane != "at" ||
+		device.Network.ManagedBy == nil || *device.Network.ManagedBy != "macos.apple_user_ecm" ||
+		!contains(device.Capabilities, "network.ecm") {
+		return nil, fmt.Errorf("unsupported or inconsistent ECM capability")
+	}
+	if device.Network.InterfaceName == nil || !validInterfaceName(*device.Network.InterfaceName) ||
+		device.Network.InterfaceIndex == nil || *device.Network.InterfaceIndex <= 0 {
+		return nil, fmt.Errorf("missing safe interface identity")
+	}
+	if device.Network.LinkState != "active" && device.Network.LinkState != "inactive" {
+		return nil, fmt.Errorf("unsupported link state %q", device.Network.LinkState)
+	}
+	return &PTYNetwork{
+		Mode:           mode,
+		InterfaceName:  *device.Network.InterfaceName,
+		InterfaceIndex: *device.Network.InterfaceIndex,
+		LinkState:      device.Network.LinkState,
+	}, nil
+}
+
+func validInterfaceName(name string) bool {
+	if len(name) < 3 || len(name) > 15 || !strings.HasPrefix(name, "en") {
+		return false
+	}
+	for _, character := range name[2:] {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func attachmentKey(epoch string, device Device) string {

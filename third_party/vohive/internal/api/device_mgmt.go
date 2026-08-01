@@ -995,7 +995,7 @@ type discoveredDevice struct {
 	ATPort         string   `json:"at_port"`
 	AudioDevice    string   `json:"audio_device,omitempty"`
 	Mode           string   `json:"mode,omitempty"`  // qmi/mbim/ecm/rndis/ncm/unknown
-	NetworkCapable bool     `json:"network_capable"` // 是否可由 QMI Core 接管
+	NetworkCapable bool     `json:"network_capable"` // 是否存在可用的数据面（QMI/MBIM/ECM）
 	Configured     bool     `json:"configured"`
 	ConfiguredID   string   `json:"configured_id,omitempty"`
 	Degraded       bool     `json:"degraded,omitempty"` // 探不到 IMEI,无法确立身份,不可直接添加

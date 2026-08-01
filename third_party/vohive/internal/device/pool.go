@@ -1221,6 +1221,13 @@ func (p *Pool) applyNetworkPreference(worker *Worker) error {
 		worker.clearCachedIP()
 		return nil
 	}
+	if networkControllerIsExternallyManaged(nc) {
+		// ECM firmware owns PDP activation. network_enabled=false means Vohive
+		// must not consume the interface; it does not claim to tear down the
+		// modem-managed link.
+		worker.clearCachedIP()
+		return nil
+	}
 	return worker.StopNetwork()
 }
 

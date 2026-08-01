@@ -89,11 +89,22 @@ type NetworkState struct {
 // DeviceProvider.  It excludes IMEI, firmware and other values that should not
 // be printed by diagnostics or persisted as a runtime-path identity.
 type PTYDevice struct {
-	InstanceID    string  `json:"instance_id"`
-	Generation    uint64  `json:"generation"`
-	AttachmentKey string  `json:"attachment_key"`
-	LocationID    string  `json:"location_id"`
-	RegistryID    *string `json:"registry_id,omitempty"`
-	Path          string  `json:"path"`
-	Ownership     string  `json:"ownership"`
+	InstanceID    string      `json:"instance_id"`
+	Generation    uint64      `json:"generation"`
+	AttachmentKey string      `json:"attachment_key"`
+	LocationID    string      `json:"location_id"`
+	RegistryID    *string     `json:"registry_id,omitempty"`
+	Path          string      `json:"path"`
+	Ownership     string      `json:"ownership"`
+	Network       *PTYNetwork `json:"network,omitempty"`
+}
+
+// PTYNetwork is the minimized, attach-scoped data-plane mapping consumed by
+// Vohive. ec20d has already proven the IORegistry parent relationship between
+// this interface and the device's USB interface 4.
+type PTYNetwork struct {
+	Mode           string `json:"mode"`
+	InterfaceName  string `json:"interface_name"`
+	InterfaceIndex int    `json:"interface_index"`
+	LinkState      string `json:"link_state"`
 }

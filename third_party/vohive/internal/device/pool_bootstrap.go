@@ -264,6 +264,7 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 
 		if len(resolved.Matched) > 0 {
 			hw := resolved.Matched[0].Hardware
+			devCfg.DataPlaneMode = strings.ToLower(strings.TrimSpace(hw.Mode))
 			if strings.TrimSpace(hw.USBPath) != "" {
 				devCfg.USBPath = hw.USBPath
 			}
@@ -425,6 +426,11 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 		Pool:             p,
 		stop:             make(chan struct{}),
 		reassembler:      smscodec.NewReassembler(),
+	}
+	if backendMode == backend.BackendAT &&
+		strings.EqualFold(devCfg.DataPlaneMode, "ecm") &&
+		strings.TrimSpace(devCfg.Interface) != "" {
+		w.netOverride = newECMNetworkController(devCfg.Interface)
 	}
 	p.assignWorkerGeneration(w)
 	configureWorkerAPDUArbiter(w, qmiTransport)

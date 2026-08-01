@@ -84,6 +84,14 @@ func (p *EC20DHardwareProvider) Snapshot(ctx context.Context) (HardwareSnapshot,
 
 	modems := make([]CompatibleModem, len(snapshot.Devices))
 	for index, device := range snapshot.Devices {
+		mode := ec20dPTYMode
+		netInterface := ""
+		networkCapable := false
+		if device.Network != nil {
+			mode = device.Network.Mode
+			netInterface = device.Network.InterfaceName
+			networkCapable = true
+		}
 		modems[index] = CompatibleModem{
 			USBPath:        device.AttachmentKey,
 			VendorID:       ec20dPTYVendorID,
@@ -91,9 +99,10 @@ func (p *EC20DHardwareProvider) Snapshot(ctx context.Context) (HardwareSnapshot,
 			DriverName:     ec20dPTYDriverName,
 			ATPorts:        []string{device.Path},
 			ATPort:         device.Path,
-			Mode:           ec20dPTYMode,
+			NetInterface:   netInterface,
+			Mode:           mode,
 			TransportType:  ec20dPTYMode,
-			NetworkCapable: false,
+			NetworkCapable: networkCapable,
 		}
 	}
 

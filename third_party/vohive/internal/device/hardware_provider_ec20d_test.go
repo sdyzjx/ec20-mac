@@ -169,6 +169,44 @@ func TestEC20DHardwareProviderReturnsIndependentATPortSlices(t *testing.T) {
 	}
 }
 
+func TestEC20DHardwareProviderMapsECMDataPlaneWithoutChangingATTransport(t *testing.T) {
+	fake := &fakeEC20DPTYDiscoverer{snapshot: ec20d.PTYSnapshot{
+		Epoch:    "daemon-epoch-ecm",
+		Revision: 9,
+		Devices: []ec20d.PTYDevice{{
+			InstanceID:    "usb-03120000-1",
+			Generation:    1,
+			AttachmentKey: "ec20d:attach-ecm",
+			LocationID:    "03120000",
+			Path:          "/dev/ttys009",
+			Ownership:     "cooperative_single_client",
+			Network: &ec20d.PTYNetwork{
+				Mode:           "ecm",
+				InterfaceName:  "en11",
+				InterfaceIndex: 34,
+				LinkState:      "active",
+			},
+		}},
+	}}
+	provider, err := newEC20DHardwareProvider(fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := provider.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Modems) != 1 {
+		t.Fatalf("modems=%#v", snapshot.Modems)
+	}
+	got := snapshot.Modems[0]
+	if got.NetInterface != "en11" || got.Mode != "ecm" ||
+		got.TransportType != "at" || !got.NetworkCapable ||
+		got.ATPort != "/dev/ttys009" || got.ControlPath != "" {
+		t.Fatalf("unexpected ECM modem mapping: %#v", got)
+	}
+}
+
 func TestEC20DHardwareProviderPreservesEmptySnapshotIdentity(t *testing.T) {
 	fake := &fakeEC20DPTYDiscoverer{snapshot: ec20d.PTYSnapshot{
 		Epoch:    "daemon-epoch-empty",

@@ -172,6 +172,36 @@ func TestDiscoverPTYValidatesAndMinimizesSnapshot(t *testing.T) {
 	}
 }
 
+func TestDiscoverPTYPreservesValidatedECMMapping(t *testing.T) {
+	device := validDevice("/dev/ttys009")
+	interfaceIndex := 34
+	device.Network = NetworkState{
+		Mode:           "ecm",
+		DataPlane:      stringPointer("ethernet"),
+		ControlPlane:   "at",
+		InterfaceName:  stringPointer("en11"),
+		InterfaceIndex: &interfaceIndex,
+		LinkState:      "active",
+		ManagedBy:      stringPointer("macos.apple_user_ecm"),
+	}
+	device.Capabilities = append(device.Capabilities, "network.ecm")
+	client, serverResult := newScriptedClient(t, standardScript(device))
+
+	snapshot, err := client.DiscoverPTY(context.Background())
+	if err != nil {
+		t.Fatalf("DiscoverPTY: %v", err)
+	}
+	waitForServer(t, serverResult)
+	if len(snapshot.Devices) != 1 || snapshot.Devices[0].Network == nil {
+		t.Fatalf("missing minimized ECM mapping: %#v", snapshot.Devices)
+	}
+	got := snapshot.Devices[0].Network
+	if got.Mode != "ecm" || got.InterfaceName != "en11" ||
+		got.InterfaceIndex != 34 || got.LinkState != "active" {
+		t.Fatalf("unexpected ECM mapping: %#v", got)
+	}
+}
+
 func TestAttachmentKeyChangesAcrossDaemonAndAttachIdentity(t *testing.T) {
 	base := validDevice("/dev/ttys009")
 	baseKey := attachmentKey("daemon-a", base)
@@ -353,6 +383,30 @@ func TestDiscoverPTYRejectsUnsafePathAndInterface(t *testing.T) {
 			name: "missing management capability",
 			mutate: func(device *Device) {
 				device.Capabilities = nil
+			},
+		},
+		{
+			name: "unproven network interface",
+			mutate: func(device *Device) {
+				index := 34
+				device.Network.InterfaceName = stringPointer("en11")
+				device.Network.InterfaceIndex = &index
+			},
+		},
+		{
+			name: "unsafe ECM interface name",
+			mutate: func(device *Device) {
+				index := 34
+				device.Network = NetworkState{
+					Mode:           "ecm",
+					DataPlane:      stringPointer("ethernet"),
+					ControlPlane:   "at",
+					InterfaceName:  stringPointer("../../en11"),
+					InterfaceIndex: &index,
+					LinkState:      "active",
+					ManagedBy:      stringPointer("macos.apple_user_ecm"),
+				}
+				device.Capabilities = append(device.Capabilities, "network.ecm")
 			},
 		},
 	}
