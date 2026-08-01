@@ -184,6 +184,13 @@ static NSData *MockPTYResponseForCommand(NSString *command)
         payload = @"+CPIN: READY";
     } else if ([upper isEqualToString:@"AT+COPS?"]) {
         payload = @"+COPS: 0,0,\"EC20D MOCK\",7";
+    } else if ([upper isEqualToString:@"AT+CIMI"]) {
+        payload = @"310280000000001";
+    } else if ([upper isEqualToString:@"AT+CPMS?"]) {
+        payload = @"+CPMS: \"SM\",0,10,\"SM\",0,10,\"SM\",0,10";
+    } else if ([upper isEqualToString:@"AT+CMGR=7"]) {
+        payload = @"+CMGR: 0,,38\r\n"
+                  "079144872000302320048102020000625061028204401AD9775D0E72D7DBE2B21C949E8360B75A4E7683D16AB71B";
     } else if ([upper isEqualToString:@"AT+QCFG=\"USBNET\""]) {
         payload = @"+QCFG: \"usbnet\",0";
     }

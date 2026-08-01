@@ -219,7 +219,18 @@ func (m *Manager) WaitReady(timeout time.Duration) bool {
 
 // SetSMSCallback 设置短信接收回调
 func (m *Manager) SetSMSCallback(cb SMSCallback) {
+	m.infoMu.Lock()
 	m.smsCallback = cb
+	m.infoMu.Unlock()
+}
+
+func (m *Manager) dispatchSMS(sender, content string, timestamp time.Time) {
+	m.infoMu.RLock()
+	cb := m.smsCallback
+	m.infoMu.RUnlock()
+	if cb != nil {
+		cb(sender, content, timestamp)
+	}
 }
 
 // SetNewSMSHandler 设置新短信索引回调 (当收到 URC 时调用，用于接管读取流程)
@@ -1458,9 +1469,7 @@ func (m *Manager) readAndProcessSMSFromStorage(storage, index string) {
 	logger.Debug(fmt.Sprintf("[%s] 短信内容", m.cfg.ID), "sender", sender, "content", content)
 
 	// 回调通知
-	if m.smsCallback != nil {
-		m.smsCallback(sender, content, timestamp)
-	}
+	m.dispatchSMS(sender, content, timestamp)
 
 	// 删除已读短信
 	m.ExecuteAT("AT+CMGD="+index, 3*time.Second)
@@ -1883,8 +1892,8 @@ func (m *Manager) CheckAllSMS() {
 
 	for _, pduHex := range pdus {
 		sender, content, timestamp := m.decodePDU(pduHex)
-		if m.smsCallback != nil && content != "" {
-			m.smsCallback(sender, content, timestamp)
+		if content != "" {
+			m.dispatchSMS(sender, content, timestamp)
 		}
 	}
 

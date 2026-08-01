@@ -10,15 +10,18 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 VOHIVE_DIR=${VOHIVE_DIR:-"$PROJECT_DIR/third_party/vohive"}
 EC20D_BIN=${EC20D_BIN:-"$PROJECT_DIR/build/ec20d"}
+EC20CTL_BIN=${EC20CTL_BIN:-"$PROJECT_DIR/build/ec20ctl"}
 GO_BIN=${GO_BIN:-go}
 VOHIVE_BIN=${VOHIVE_BIN:-}
 FIXTURE="$SCRIPT_DIR/fixtures/vohive-darwin-mock.yaml"
 COUNTRY_FIXTURE="$SCRIPT_DIR/fixtures/mcc-mnc-table.json"
 
-if [ ! -x "$EC20D_BIN" ]; then
-    echo "missing executable: $EC20D_BIN" >&2
-    exit 2
-fi
+for required_binary in "$EC20D_BIN" "$EC20CTL_BIN"; do
+    if [ ! -x "$required_binary" ]; then
+        echo "missing executable: $required_binary" >&2
+        exit 2
+    fi
+done
 if [ ! -f "$VOHIVE_DIR/go.mod" ] ||
    [ ! -f "$VOHIVE_DIR/internal/web/dist/index.html" ]; then
     echo "Vohive module or embedded Web distribution is missing: $VOHIVE_DIR" >&2
@@ -43,14 +46,20 @@ CONFIG_PATH="$TEST_TMPDIR/config.yaml"
 DAEMON_LOG="$TEST_TMPDIR/ec20d.log"
 VOHIVE_LOG="$TEST_TMPDIR/vohive.log"
 HTTP_HEADERS="$TEST_TMPDIR/headers.txt"
+USSD_RESPONSE_FILE="$TEST_TMPDIR/ussd-response.json"
 DAEMON_PID=
 VOHIVE_PID=
+USSD_PID=
 PTY_PATH=
 
 cleanup()
 {
     saved_status=$?
     trap - EXIT HUP INT TERM
+    if [ -n "$USSD_PID" ] && kill -0 "$USSD_PID" 2>/dev/null; then
+        kill -TERM "$USSD_PID" 2>/dev/null || true
+        wait "$USSD_PID" 2>/dev/null || true
+    fi
     if [ -n "$VOHIVE_PID" ] && kill -0 "$VOHIVE_PID" 2>/dev/null; then
         kill -TERM "$VOHIVE_PID" 2>/dev/null || true
         wait "$VOHIVE_PID" 2>/dev/null || true
@@ -312,6 +321,36 @@ do
         *)
             printf '%s\n' "$SMS_RESPONSE" >&2
             fail "managed device SMS transaction did not complete through prompt/Ctrl-Z"
+            ;;
+    esac
+done
+
+curl -fsS --max-time 5 \
+    -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' \
+    --data '{"command":"*123#","timeout_ms":3000}' \
+    "$BASE_URL/api/devices/ec20-mock/actions/ussd" >"$USSD_RESPONSE_FILE" &
+USSD_PID=$!
+sleep 0.1
+"$EC20CTL_BIN" --socket "$SOCKET_PATH" \
+    mock-urc '+CUSD: 0,"Mock balance",15' >/dev/null ||
+    fail "injecting the managed device USSD response failed"
+if ! wait "$USSD_PID"; then
+    USSD_PID=
+    fail "managed device USSD request failed"
+fi
+USSD_PID=
+USSD_RESPONSE=$(sed -n '1p' "$USSD_RESPONSE_FILE")
+for expected_ussd_field in \
+    '"status":"ok"' \
+    '"channel":"cs"' \
+    '"text":"Mock balance"'
+do
+    case "$USSD_RESPONSE" in
+        *"$expected_ussd_field"*) ;;
+        *)
+            printf '%s\n' "$USSD_RESPONSE" >&2
+            fail "managed device USSD transaction did not complete through the Web API"
             ;;
     esac
 done

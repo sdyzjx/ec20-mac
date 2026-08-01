@@ -79,6 +79,84 @@ func TestDarwinManagerEC20DMockPTYLifecycle(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Manager did not dispatch the injected SIM URC")
 	}
+
+	smsReceived := make(chan struct {
+		sender  string
+		content string
+	}, 1)
+	manager.SetSMSCallback(func(sender, content string, _ time.Time) {
+		smsReceived <- struct {
+			sender  string
+			content string
+		}{sender: sender, content: content}
+	})
+	if output, err := exec.Command(ec20ctlPath, "--socket", socketPath, "mock-urc", `+CMTI: "ME",7`).CombinedOutput(); err != nil {
+		t.Fatalf("inject mock CMTI: %v (%s)", err, output)
+	}
+	select {
+	case sms := <-smsReceived:
+		if sms.sender == "" || sms.content == "" {
+			t.Fatalf("decoded incoming SMS sender=%q content=%q", sms.sender, sms.content)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Manager did not read and dispatch the injected incoming SMS")
+	}
+
+	ussdResult := make(chan *USSDResult, 1)
+	ussdError := make(chan error, 1)
+	go func() {
+		result, err := manager.ExecuteUSSD("*123#", 2*time.Second)
+		if err != nil {
+			ussdError <- err
+			return
+		}
+		ussdResult <- result
+	}()
+	time.Sleep(100 * time.Millisecond)
+	if output, err := exec.Command(ec20ctlPath, "--socket", socketPath, "mock-urc", `+CUSD: 0,"Mock balance",15`).CombinedOutput(); err != nil {
+		t.Fatalf("inject mock CUSD: %v (%s)", err, output)
+	}
+	select {
+	case result := <-ussdResult:
+		if result == nil || result.Text != "Mock balance" || result.Status != 0 {
+			t.Fatalf("USSD result=%#v", result)
+		}
+	case err := <-ussdError:
+		t.Fatalf("ExecuteUSSD: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Manager did not dispatch the injected USSD response")
+	}
+
+	ring := make(chan struct{}, 1)
+	clip := make(chan string, 1)
+	hangup := make(chan struct{}, 1)
+	manager.SetRingCallback(func() { ring <- struct{}{} })
+	manager.SetClipCallback(func(number string) { clip <- number })
+	manager.SetHangupCallback(func() { hangup <- struct{}{} })
+	for _, urc := range []string{"RING", `+CLIP: "+12025550123",145`, "NO CARRIER"} {
+		if output, err := exec.Command(ec20ctlPath, "--socket", socketPath, "mock-urc", urc).CombinedOutput(); err != nil {
+			t.Fatalf("inject mock call URC %q: %v (%s)", urc, err, output)
+		}
+	}
+	select {
+	case <-ring:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Manager did not dispatch RING")
+	}
+	select {
+	case number := <-clip:
+		if number != "+12025550123" {
+			t.Fatalf("CLIP number=%q", number)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Manager did not dispatch CLIP")
+	}
+	select {
+	case <-hangup:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Manager did not dispatch NO CARRIER")
+	}
+
 	response, err := manager.ExecuteAT("AT", 2*time.Second)
 	if err != nil {
 		t.Fatalf("Manager.ExecuteAT: %v", err)
