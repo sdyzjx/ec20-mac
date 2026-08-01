@@ -49,7 +49,7 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-当前环境检测到 Go，因此 CTest 共运行七项；它们全部是 self-test 或 `--mock` 集成，不访问 USB：
+P1 最初建立的七项核心 CTest 如下；它们全部是 self-test 或 `--mock` 集成，不访问 USB：
 
 | CTest | 覆盖内容 |
 |---|---|
@@ -61,9 +61,9 @@ ctest --test-dir build --output-on-failure
 | `ec20d-pty-mock-integration` | mock PTY、POSIX raw termios 和独立 `OK` |
 | `ec20d-vohive-serial-integration` | `go.bug.st/serial` v1.6.4 通过 mock PTY 收发 AT |
 
-2026-08-01 的 fresh CMake configure/build 结果为
-`100% tests passed, 0 tests failed out of 7`。最后一项只在 CMake 找到 Go toolchain 时注册；
-缺少 Go 不会阻止 Objective-C 核心构建，但不能据此宣称 Vohive 串口兼容已通过。
+P3 继续在此基础上加入 provider、Manager 安全门和完整 Web 流程，当前根套件为 13/13，详见
+[Darwin Web 端到端文档](vohive-darwin-web.md)。Go 相关项只在 CMake 找到 Go toolchain 时注册；
+缺少 Go 不会阻止 Objective-C 核心构建，但不能据此宣称 Vohive 兼容已通过。
 
 运行不接触硬件的端到端 mock 测试：
 
@@ -111,8 +111,9 @@ SOCKET_PATH="${TMPDIR:-/tmp}/ec20d-demo.sock"
 ./build/ec20ctl --socket "$SOCKET_PATH" at AT
 ```
 
-mock 设备使用固定的 `instance_id` `usb-03120000-1`，`AT` 返回命令 echo 和独立的 `OK`
-终止行。mock 结果只证明 IPC、policy 和客户端路径成立，不能作为 USB 实机测试证据。
+mock 设备使用固定的 `instance_id` `usb-03120000-1`。普通命令返回 echo 和独立的 `OK`；常用只读
+查询还返回确定性数据，例如 `AT+CGSN` 为 `867530900000001`、`AT+CSQ` 为 `+CSQ: 20,99`、
+`AT+CPIN?` 为 `READY`。这些 fixture 用于验证 Vohive 的解析和 UI 流程，不能作为 USB 实机证据。
 
 PTY mock 模式会在 `devices.list` 的 `at.path` 发布动态路径，并把 AT RPC capability 切换为
 `at.pty`：

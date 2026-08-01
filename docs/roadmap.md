@@ -195,6 +195,15 @@ Vohive 通过 Darwin 平台后端使用它们。
 - 关闭蜂窝或故意给出不存在接口时代理明确失败，证明没有 Wi-Fi/DNS 泄漏；
 - UI/API 对 P5 才实现的 QMI 功能明确标为暂不可用，不能崩溃或伪成功。
 
+### 当前进度（2026-08-01）
+
+- 已完成 Darwin arm64/amd64 backend build、认证 ec20d provider、Pool/API discovery 和 Manager
+  进程内串口 lease；
+- 已在 mock EC20 上跑通完整嵌入式 Web 的登录、发现、添加、overview 身份收敛、AT 终端与删除，
+  UI 对 AT-only 设备明确禁用网络能力语义；
+- 尚未通过本节要求的真实短信/USSD/热插拔和 ECM 出口验收，因此 P3 仍为进行中，不能打
+  `p3-vohive-darwin-mvp` 标签。
+
 ### 风险与回退
 
 - 风险：Vohive Linux 假设散布、`swu-go` 等依赖无法 Darwin 编译、DNS 不随 socket 绑定、上游

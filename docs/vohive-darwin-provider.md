@@ -171,10 +171,11 @@ vohive-darwin-device-provider-unit
 vohive-darwin-provider-integration
 ec20d-vohive-manager-integration
 vohive-darwin-modem-safety-unit
+vohive-darwin-web-integration
 ```
 
 Provider harness 现在显式停止 daemon，不再使用 request 数量触发退出，避免最后一个 response 与
-PTY `lstat` 认证竞态。完整根测试结果为 12/12。相关 provider/Pool/API、deadline、attachment
+PTY `lstat` 认证竞态。完整根测试结果为 13/13。相关 provider/Pool/API、deadline、attachment
 cache、Manager 生命周期和并发门禁通过 race 测试及 vet；Darwin arm64/amd64 与 Linux amd64
 后端均完成构建回归。
 
@@ -200,8 +201,8 @@ SOCKET_PATH="$SOCKET_DIR/ec20d.sock"
 - attachment key 与动态 `/dev/ttys*` 正确进入 Pool；
 - 没有打开 PTY，没有发送 AT，没有触碰 interface 4，也没有改变 `usbnet=0`。
 
-本轮没有在实机执行 `?with_imei=1`、`AddWorkerFromConfig` 或完整 Vohive HTTP 服务。mock/metadata
-证据不能推导短信、通话、网络或热插拔已经可用。
+本轮没有在实机执行 `?with_imei=1`、`AddWorkerFromConfig` 或完整 Vohive HTTP 服务；这些路径只在
+mock PTY 上完成。mock/metadata 证据不能推导短信、通话、网络或热插拔已经可用。
 
 ## 7. 尚未完成
 
@@ -211,7 +212,7 @@ SOCKET_PATH="$SOCKET_DIR/ec20d.sock"
 - ECM/MBIM controller、地址/DNS/路由观察与端到端代理出口；
 - interface 4 的 QMI transport、Raw-IP/Ethernet 数据面和 `NetworkingDriverKit`；
 - CoreAudio 语音路径及 VoWiFi/IPsec 的真实 Darwin 实现；
-- Vohive UI 的 capability 呈现、Host App、launchd、签名、公证与 DriverKit entitlement。
+- 更细的 SMS/USSD/eSIM/网络 capability 门禁、Host App、launchd、签名、公证与 DriverKit entitlement。
 
 下一步应为连续 reader、URC 与短信 transaction 建立 deterministic mock，再在明确授权的实机
 门禁下做 Manager 测试。真实 Manager 初始化会发送易恢复但会改变会话状态的 AT 配置，具体安全

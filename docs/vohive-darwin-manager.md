@@ -71,8 +71,9 @@ CTest `ec20d-vohive-manager-integration` 执行：
 `AT+CNMI=...`、`AT+CLIP=1`、`AT+QPCMV=1,2`，默认 ec20d 只读 allowlist 会拒绝这些命令；mock
 模式不会枚举或写入 USB，所以此测试不会改变真实模块。
 
-mock 对每条命令只返回 echo + `OK`。它验证串口 framing、队列、并发、关闭和所有权，不验证真实
-IMEI/SIM/信号解析，也不能证明短信、URC 或通话已经工作。
+mock 对普通命令返回 echo + `OK`，并为 `ATI`、`AT+GMR`、`AT+CGSN`、`AT+CSQ`、`AT+CPIN?`、
+`AT+COPS?` 和只读 `usbnet` 查询提供确定性 EC20 风格 payload。这使完整 Web 流程可以验证 IMEI、
+信号和 AT 终端解析；它仍不能证明真实 SIM、短信、连续 URC 或通话已经工作。
 
 运行：
 
@@ -84,7 +85,8 @@ ctest --test-dir build \
   --output-on-failure
 ```
 
-当前根 CTest 为 12/12。Provider integration 也改为由 harness 显式 SIGTERM daemon，避免
+当前根 CTest 为 13/13，其中新增完整 Web integration。Provider integration 也由 harness 显式
+SIGTERM daemon，避免
 `--max-requests` 在最后一个 response 发出后立即移除 PTY、与客户端 `lstat` 认证形成竞态。
 
 ## 5. 真实设备门禁
