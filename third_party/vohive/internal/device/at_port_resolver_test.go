@@ -100,3 +100,48 @@ func TestResolveATPortForDeviceFallsBackToCandidateWhenNoATPortsList(t *testing.
 		t.Fatalf("probed=%v want=%v", probed, []string{"/dev/ttyUSB9"})
 	}
 }
+
+func TestResolveCompatibleModemATPortScopesCacheToAttachment(t *testing.T) {
+	orig := probeIMEICachedForAttachmentFn
+	t.Cleanup(func() { probeIMEICachedForAttachmentFn = orig })
+
+	var gotAttachment string
+	var gotPort string
+	probeIMEICachedForAttachmentFn = func(attachmentKey, atPort string, timeout time.Duration) (string, error) {
+		gotAttachment = attachmentKey
+		gotPort = atPort
+		return "867123456789012", nil
+	}
+
+	dev, imei := ResolveCompatibleModemATPort(CompatibleModem{
+		USBPath: "ec20d:current-attachment",
+		ATPort:  "/dev/ttys00a",
+		ATPorts: []string{"/dev/ttys00a"},
+	}, 50*time.Millisecond)
+
+	if gotAttachment != "ec20d:current-attachment" || gotPort != "/dev/ttys00a" {
+		t.Fatalf("attachment probe=(%q,%q), want current attachment and PTY", gotAttachment, gotPort)
+	}
+	if dev.ATPort != "/dev/ttys00a" || dev.IMEI != "867123456789012" || imei != "867123456789012" {
+		t.Fatalf("ResolveCompatibleModemATPort()=(%#v,%q)", dev, imei)
+	}
+}
+
+func TestResolveCompatibleModemATPortWithoutAttachmentKeepsLegacyProbe(t *testing.T) {
+	orig := probeIMEICachedFn
+	t.Cleanup(func() { probeIMEICachedFn = orig })
+
+	legacyCalls := 0
+	probeIMEICachedFn = func(atPort string, timeout time.Duration) (string, error) {
+		legacyCalls++
+		return "867123456789012", nil
+	}
+
+	dev, imei := ResolveCompatibleModemATPort(CompatibleModem{
+		ATPort:  "/dev/ttyUSB2",
+		ATPorts: []string{"/dev/ttyUSB2"},
+	}, 50*time.Millisecond)
+	if legacyCalls != 1 || dev.ATPort != "/dev/ttyUSB2" || imei != "867123456789012" {
+		t.Fatalf("legacy resolution calls=%d dev=%#v imei=%q", legacyCalls, dev, imei)
+	}
+}

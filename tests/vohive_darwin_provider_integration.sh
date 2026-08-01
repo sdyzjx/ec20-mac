@@ -60,7 +60,7 @@ trap 'exit 143' TERM
 "$EC20D_BIN" \
     --mock \
     --pty \
-    --max-requests 2 \
+    --max-requests 4 \
     --socket "$SOCKET_PATH" >"$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 
@@ -131,6 +131,44 @@ if [ -z "$PTY_PATH" ]; then
     echo "could not recover the PTY path from provider output" >&2
     exit 1
 fi
+
+if pool_output=$(
+    cd "$VOHIVE_DIR" &&
+    GOWORK=off "$GO_BIN" run ./cmd/vohive-darwin-probe \
+        --socket "$SOCKET_PATH" \
+        --pool \
+        --json
+); then
+    :
+else
+    pool_status=$?
+    echo "Vohive Darwin Pool probe exited with status $pool_status" >&2
+    sed -n '1,160p' "$DAEMON_LOG" >&2
+    exit 1
+fi
+
+case "$pool_output" in
+    *'"attachment_key": "ec20d:'*'"vendor_id_hex": "2c7c"'*'"product_id_hex": "0125"'*) ;;
+    *)
+        echo "Pool provider output omitted the EC20 attachment identity" >&2
+        printf '%s\n' "$pool_output" >&2
+        exit 1
+        ;;
+esac
+case "$pool_output" in
+    *'"driver_name": "ec20d-pty"'*'"path": "/dev/ttys'*'"mode": "at"'*'"network_capable": false'*) ;;
+    *)
+        echo "Pool provider output violated the AT-only capability mapping" >&2
+        printf '%s\n' "$pool_output" >&2
+        exit 1
+        ;;
+esac
+case "$pool_output" in
+    *'"imei"'*|*'"firmware"'*|*'"control_path"'*)
+        echo "Pool provider diagnostic exposed disallowed fields" >&2
+        exit 1
+        ;;
+esac
 
 if wait "$DAEMON_PID"; then
     daemon_status=0

@@ -17,7 +17,6 @@ import (
 	"github.com/1239t/vohive/internal/api"
 	"github.com/1239t/vohive/internal/config"
 	"github.com/1239t/vohive/internal/db"
-	"github.com/1239t/vohive/internal/device"
 	"github.com/1239t/vohive/internal/notify"
 	proxyserver "github.com/1239t/vohive/internal/proxy/server"
 	"github.com/1239t/vohive/internal/proxy/traffic"
@@ -179,7 +178,10 @@ func main() {
 
 	// 4. 初始化设备池
 
-	pool := device.NewPool(cfg)
+	pool, err := newDevicePool(cfg)
+	if err != nil {
+		log.Fatalf("初始化平台设备池失败: %v", err)
+	}
 
 	// 卡策略：注入 db-backed resolver；一次性把旧 yaml 策略种子进 card_policies。
 	pool.SetPolicyResolver(db.CardPolicyResolver{})

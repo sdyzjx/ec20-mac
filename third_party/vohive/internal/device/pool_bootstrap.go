@@ -256,11 +256,17 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 	configuredIndex := BuildConfiguredDeviceIndex(config.ListDevices())
 	if !needsQMICore {
 		liveWorkerIndex := BuildWorkerDiscoveryIndex(p.GetAllWorkers(), true)
-		hardware := p.collectRescanHardware(nil, liveWorkerIndex)
+		hardware, discoveryErr := p.collectRescanHardwareContext(p.ctx, nil, liveWorkerIndex)
+		if discoveryErr != nil {
+			return nil, fmt.Errorf("发现非 QMI 硬件失败: %w", discoveryErr)
+		}
 		resolved := ResolveDeviceIdentities(hardware, []config.DeviceConfig{devCfg})
 
 		if len(resolved.Matched) > 0 {
 			hw := resolved.Matched[0].Hardware
+			if strings.TrimSpace(hw.USBPath) != "" {
+				devCfg.USBPath = hw.USBPath
+			}
 			if devCfg.Interface == "" {
 				devCfg.Interface = hw.NetInterface
 			}
@@ -298,7 +304,10 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 			if qmiErr != nil {
 				logger.Debug("QMI 静态路径启动前发现失败", "device", devCfg.ID, "err", qmiErr)
 			} else {
-				hardware := p.collectRescanHardware(qmiList, liveWorkerIndex)
+				hardware, discoveryErr := p.collectRescanHardwareContext(p.ctx, qmiList, liveWorkerIndex)
+				if discoveryErr != nil {
+					return nil, fmt.Errorf("发现 QMI 硬件失败: %w", discoveryErr)
+				}
 				resolved := ResolveDeviceIdentities(hardware, []config.DeviceConfig{devCfg})
 				if len(resolved.Matched) > 0 {
 					hw := resolved.Matched[0].Hardware

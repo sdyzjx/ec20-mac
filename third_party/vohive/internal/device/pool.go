@@ -180,6 +180,8 @@ type Pool struct {
 	dataConnectHandlersMu     sync.RWMutex
 	dataConnectHandlers       []func(deviceID string)
 	rescanAndReconnectForTest func() error
+	hardwareProvider          HardwareProvider
+	rescanMu                  sync.Mutex
 
 	// SIP 注册器 (用于 CS 域语音桥接查路由)
 	sipRegistrar *sipgw.Registrar
@@ -208,7 +210,7 @@ type Pool struct {
 	policyResolver cardpolicy.Resolver
 }
 
-func NewPool(cfg *config.Config) *Pool {
+func NewPool(cfg *config.Config, options ...PoolOption) *Pool {
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &Pool{
 		workers:               make(map[string]*Worker),
@@ -229,6 +231,11 @@ func NewPool(cfg *config.Config) *Pool {
 		lifecycle:             newLifecycleCoordinator(),
 	}
 	p.transportRecovery = NewTransportRecoveryController(p)
+	for _, option := range options {
+		if option != nil {
+			option(p)
+		}
+	}
 	p.voWiFiHost().ConfigureAdapter(p)
 	p.voWiFiHost().ConfigureRuntimeDependencies(p.GetVoiceGateway(), vowifiDeliveryStore{}, poolVoWiFiRuntimeDispatcher{pool: p})
 
@@ -1889,6 +1896,54 @@ func (p *Pool) RescanAndReconnect() error {
 }
 
 func (p *Pool) collectRescanHardware(discovered []QMIDevice, liveWorkerIndex WorkerDiscoveryIndex) []CompatibleModem {
+	ctx := context.Background()
+	if p != nil && p.ctx != nil {
+		ctx = p.ctx
+	}
+	hardware, _ := p.collectRescanHardwareContext(ctx, discovered, liveWorkerIndex)
+	return hardware
+}
+
+func (p *Pool) collectRescanHardwareContext(ctx context.Context, discovered []QMIDevice, liveWorkerIndex WorkerDiscoveryIndex) ([]CompatibleModem, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("hardware collection requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if p != nil && p.hardwareProvider != nil {
+		snapshot, err := p.DiscoverHardware(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("platform hardware snapshot: %w", err)
+		}
+		hardware := snapshot.Modems
+		managed := config.ListDevices()
+		if !configuredDevicesNeedCompatibleATDiscovery(managed) {
+			return hardware, nil
+		}
+		for index := range hardware {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			modem := hardware[index]
+			if live, ok := liveWorkerIndex.Lookup(modem.ControlPath, modem.USBPath, modem.NetInterface); ok && live.IMEI != "" {
+				modem.IMEI = live.IMEI
+				if containsPort(modem.ATPorts, live.ATPort) {
+					modem.ATPort = live.ATPort
+				}
+				hardware[index] = modem
+				continue
+			}
+			resolved, imei := resolveDiscoveredCompatibleModemFn(modem, 1200*time.Millisecond)
+			resolved.IMEI = imei
+			hardware[index] = resolved
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return hardware, nil
+	}
+
 	var hardware []CompatibleModem
 	for i := range discovered {
 		raw := discovered[i]
@@ -1939,18 +1994,34 @@ func (p *Pool) collectRescanHardware(discovered []QMIDevice, liveWorkerIndex Wor
 			}
 		}
 	}
-	return hardware
+	return hardware, nil
 }
 
 func (p *Pool) rescanAndReconnect(opts rescanReconnectOptions) error {
-	discovered, err := discoverQMIDevicesFn()
-	if err != nil {
-		logger.Warn("QMI 硬件扫描失败，将继续使用兼容扫描", "err", err)
-		discovered = nil
+	p.rescanMu.Lock()
+	defer p.rescanMu.Unlock()
+	if err := p.ctx.Err(); err != nil {
+		return err
+	}
+
+	var discovered []QMIDevice
+	if p.hardwareProvider == nil {
+		var err error
+		discovered, err = discoverQMIDevicesFn()
+		if err != nil {
+			logger.Warn("QMI 硬件扫描失败，将继续使用兼容扫描", "err", err)
+			discovered = nil
+		}
 	}
 
 	liveWorkerIndex := BuildWorkerDiscoveryIndex(p.GetAllWorkers(), false)
-	hardware := p.collectRescanHardware(discovered, liveWorkerIndex)
+	hardware, err := p.collectRescanHardwareContext(p.ctx, discovered, liveWorkerIndex)
+	if err != nil {
+		return err
+	}
+	if err := p.ctx.Err(); err != nil {
+		return err
+	}
 	managed := config.ListDevices()
 	resolved := ResolveDeviceIdentities(hardware, managed)
 
@@ -1986,6 +2057,7 @@ func (p *Pool) rescanAndReconnect(opts rescanReconnectOptions) error {
 			logger.Info("检测到设备上线，自动启动", "device", md.ID, "imei", md.ModemIMEI)
 			cfg := md
 			if !useQMI {
+				cfg.USBPath = hw.USBPath
 				if hw.NetInterface != "" {
 					cfg.Interface = hw.NetInterface
 				}
@@ -2029,6 +2101,7 @@ func (p *Pool) rescanAndReconnect(opts rescanReconnectOptions) error {
 			_ = p.RemoveWorker(md.ID)
 			cfg := md
 			if !useQMI {
+				cfg.USBPath = hw.USBPath
 				if hw.NetInterface != "" {
 					cfg.Interface = hw.NetInterface
 				}
@@ -2103,9 +2176,15 @@ func (p *Pool) rescanAndReconnect(opts rescanReconnectOptions) error {
 				}
 			}
 			currentATPort := hw.ATPort
-			if currentATPort != "" && currentATPort != worker.Config.ATPort {
-				logger.Info("检测到设备端口变化，重建 Worker",
-					"device", md.ID, "old_port", worker.Config.ATPort, "new_port", currentATPort)
+			attachmentChanged := !useQMI && strings.TrimSpace(hw.USBPath) != "" &&
+				strings.TrimSpace(hw.USBPath) != strings.TrimSpace(worker.Config.USBPath)
+			if attachmentChanged || (currentATPort != "" && currentATPort != worker.Config.ATPort) {
+				logger.Info("检测到设备 attachment 或端口变化，重建 Worker",
+					"device", md.ID,
+					"old_usb_path", worker.Config.USBPath,
+					"new_usb_path", hw.USBPath,
+					"old_port", worker.Config.ATPort,
+					"new_port", currentATPort)
 				p.teardownVoWiFiForReconnect(md.ID)
 				if p.lifecycle != nil {
 					p.lifecycle.BeginRecovery(md.ID, LifecyclePhaseWorkerStarting, "rescan_port_change", qmiLifecycleRecoveryTTL)
@@ -2113,6 +2192,7 @@ func (p *Pool) rescanAndReconnect(opts rescanReconnectOptions) error {
 				_ = p.RemoveWorker(md.ID)
 				cfg := md
 				if !useQMI {
+					cfg.USBPath = hw.USBPath
 					if hw.NetInterface != "" {
 						cfg.Interface = hw.NetInterface
 					}

@@ -194,6 +194,21 @@ if(EC20_GO_EXECUTABLE)
     )
 
     add_test(
+        NAME vohive-darwin-device-provider-unit
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "GOWORK=off"
+            "${EC20_GO_EXECUTABLE}" test -count=1
+                -run "^(TestEC20DHardwareProvider.*|TestNewEC20DHardwareProvider.*|TestNewPoolWithHardwareProvider.*|TestCollectRescanHardwareUsesProviderSnapshot|TestRescanHardwareProviderErrorDoesNotEvictWorkers|TestRescanHardwareProviderTimeoutReleasesLockForRetry|TestHardwareProviderCanceledContextDoesNotScan|TestAuthoritativeEmptyProviderSnapshotEvictsOfflineWorker|TestWithNilHardwareProviderKeepsLegacyMode|TestResolveCompatibleModemATPort.*|TestProbeIMEICached.*|TestHandleDeviceMgmtDiscoveredUsesPoolHardwareProvider|TestHandleDeviceMgmtDiscoveredProviderWithIMEIUsesAttachmentScopedEnrichment|TestHandleDeviceMgmtDiscoveredProviderEmptySnapshotIsAuthoritative|TestHandleDeviceMgmtDiscoveredReportsProviderFailure|TestHandleDeviceMgmtDiscoveredPropagatesRequestCancellationToProvider)$"
+                ./internal/modem
+                ./internal/device
+                ./internal/api
+    )
+    set_tests_properties(vohive-darwin-device-provider-unit PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vohive"
+        TIMEOUT 120
+    )
+
+    add_test(
         NAME vohive-darwin-provider-integration
         COMMAND "${CMAKE_COMMAND}" -E env
             "EC20D_BIN=$<TARGET_FILE:ec20d>"

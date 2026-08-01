@@ -15,40 +15,89 @@ type imeiCacheItem struct {
 	TS   time.Time
 }
 
+type imeiCacheKey struct {
+	attachmentKey string
+	atPort        string
+}
+
+const legacyIMEICacheAttachment = "legacy-port-only"
+
 // imeiCache 提供线程安全的内存 IMEI 映射缓存，避免频繁通过串口发起硬件查询
 var imeiCache struct {
 	mu sync.RWMutex
-	m  map[string]imeiCacheItem
+	m  map[imeiCacheKey]imeiCacheItem
 }
+
+// imeiProbeMissMu 串行化所有缓存未命中的实际串口探测。macOS 的 cooperative
+// PTY 不提供内核级独占；即使 attachment 不同，也不能让冷启动、重扫和 API
+// 请求同时打开串口并竞争响应。取得锁后必须再次检查缓存，以合并同一 attachment
+// 的并发探测。
+var imeiProbeMissMu sync.Mutex
+
+// probeIMEIUncachedFn 是缓存 miss 后唯一的底层探测入口，测试可替换它而无需打开串口。
+var probeIMEIUncachedFn = ProbeIMEI
 
 // ProbeIMEICached 在 10 分钟缓存有效期内优先从内存缓存中获取指定 AT 串口的 IMEI；若未命中或过期，则调用底层串口方法探测
 func ProbeIMEICached(atPort string, timeout time.Duration) (string, error) {
+	return probeIMEICached(legacyIMEICacheAttachment, atPort, timeout)
+}
+
+// ProbeIMEICachedForAttachment 按 attachment 与当前 AT 串口共同缓存 IMEI。
+// attachmentKey 必须来自当前硬件快照且非空，避免 PTY 路径被新设备复用后返回旧 IMEI。
+func ProbeIMEICachedForAttachment(attachmentKey, atPort string, timeout time.Duration) (string, error) {
+	attachmentKey = strings.TrimSpace(attachmentKey)
+	if attachmentKey == "" {
+		return "", errors.New("empty attachment key")
+	}
+	return probeIMEICached(attachmentKey, atPort, timeout)
+}
+
+func probeIMEICached(attachmentKey, atPort string, timeout time.Duration) (string, error) {
+	attachmentKey = strings.TrimSpace(attachmentKey)
 	atPort = strings.TrimSpace(atPort)
+	if attachmentKey == "" {
+		return "", errors.New("empty attachment key")
+	}
 	if atPort == "" {
 		return "", errors.New("empty at port")
 	}
+	key := imeiCacheKey{attachmentKey: attachmentKey, atPort: atPort}
 
-	imeiCache.mu.RLock()
-	if imeiCache.m != nil {
-		if it, ok := imeiCache.m[atPort]; ok {
-			if it.IMEI != "" && time.Since(it.TS) < 10*time.Minute {
-				imeiCache.mu.RUnlock()
-				return it.IMEI, nil
-			}
-		}
+	if imei, ok := cachedIMEI(key); ok {
+		return imei, nil
 	}
-	imeiCache.mu.RUnlock()
 
-	imei, err := ProbeIMEI(atPort, timeout)
+	imeiProbeMissMu.Lock()
+	defer imeiProbeMissMu.Unlock()
+
+	// 另一个等待同一全局 miss 锁的调用可能已经完成探测并写入缓存。
+	if imei, ok := cachedIMEI(key); ok {
+		return imei, nil
+	}
+
+	imei, err := probeIMEIUncachedFn(atPort, timeout)
 	if err == nil && imei != "" {
 		imeiCache.mu.Lock()
 		if imeiCache.m == nil {
-			imeiCache.m = make(map[string]imeiCacheItem)
+			imeiCache.m = make(map[imeiCacheKey]imeiCacheItem)
 		}
-		imeiCache.m[atPort] = imeiCacheItem{IMEI: imei, TS: time.Now()}
+		imeiCache.m[key] = imeiCacheItem{IMEI: imei, TS: time.Now()}
 		imeiCache.mu.Unlock()
 	}
 	return imei, err
+}
+
+func cachedIMEI(key imeiCacheKey) (string, bool) {
+	imeiCache.mu.RLock()
+	defer imeiCache.mu.RUnlock()
+	if imeiCache.m == nil {
+		return "", false
+	}
+	it, ok := imeiCache.m[key]
+	if !ok || it.IMEI == "" || time.Since(it.TS) >= 10*time.Minute {
+		return "", false
+	}
+	return it.IMEI, true
 }
 
 // ProbeIMEI 通过打开底层 TTY 串口设备并执行 `AT+CGSN` 指令来实时探测模组的 IMEI 串号

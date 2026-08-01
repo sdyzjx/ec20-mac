@@ -1020,15 +1020,28 @@ func ensureAddDeviceIMEI(cfg config.DeviceConfig, probe func(string) (string, er
 }
 
 func (s *Server) handleDeviceMgmtDiscovered(c *gin.Context) {
-	discoveredQMI, err := discoverQMIForMgmtFn()
-	if err != nil {
-		discoveredQMI = nil
-	}
+	var list []device.CompatibleModem
+	if s.pool != nil && s.pool.UsesHardwareProvider() {
+		snapshot, err := s.pool.DiscoverHardware(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"devices": []discoveredDevice{},
+				"error":   "hardware discovery unavailable",
+			})
+			return
+		}
+		list = snapshot.Modems
+	} else {
+		discoveredQMI, err := discoverQMIForMgmtFn()
+		if err != nil {
+			discoveredQMI = nil
+		}
 
-	list, err := discoverCompatibleModemsFromQMIFn(discoveredQMI)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"devices": []discoveredDevice{}})
-		return
+		list, err = discoverCompatibleModemsFromQMIFn(discoveredQMI)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"devices": []discoveredDevice{}})
+			return
+		}
 	}
 
 	withIMEI := strings.TrimSpace(c.Query("with_imei")) == "1"
