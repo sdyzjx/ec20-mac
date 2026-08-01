@@ -353,21 +353,37 @@ func main() {
 	apiServer := api.New(cfg, pool, staticFS, proxyMgr, voiceGW, notifyMgr, configPath)
 	apiServer.SetRealtimeTraffic(realtimeTraffic)
 
-	syncProxyConfigs := func(reason, deviceID string) {
+	syncProxyConfigs := func(reason, deviceID string) error {
 		if err := apiServer.SyncProxyConfigs(); err != nil {
 			logger.Warn("同步代理配置失败", "reason", reason, "device_id", deviceID, "err", err)
-			return
+			return err
 		}
 		logger.Debug("代理配置已同步", "reason", reason, "device_id", deviceID)
+		return nil
 	}
 	pool.OnDataConnected(func(deviceID string) {
-		syncProxyConfigs("qmi_data_connected", deviceID)
+		_ = syncProxyConfigs("data_connected", deviceID)
 	})
 
-	// 启动后同步代理配置到实例管理器
+	// Worker bootstrap is asynchronous. Retry until configured devices expose
+	// their runtime interface so persisted proxy instances recover after restart.
+	startupProxySyncCtx, cancelStartupProxySync := context.WithCancel(context.Background())
+	defer cancelStartupProxySync()
 	go func() {
-		time.Sleep(500 * time.Millisecond) // 等待 API 服务器初始化
-		syncProxyConfigs("startup", "")
+		delays := []time.Duration{
+			500 * time.Millisecond,
+			1 * time.Second,
+			2 * time.Second,
+			4 * time.Second,
+			8 * time.Second,
+			15 * time.Second,
+		}
+		err := retryWithDelays(startupProxySyncCtx, delays, func(attempt int) error {
+			return syncProxyConfigs(fmt.Sprintf("startup_%d", attempt), "")
+		})
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("启动代理配置恢复重试耗尽", "err", err)
+		}
 	}()
 
 	apiErrCh := make(chan error, 1)

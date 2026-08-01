@@ -60,6 +60,22 @@ server:
 	}
 }
 
+func TestLoadUsesEnvironmentHostWhenYAMLOmitsHost(t *testing.T) {
+	t.Setenv("PROXY_SERVER_HOST", "127.0.0.1")
+	t.Setenv("PROXY_SERVER_PORT", "18575")
+	path := writeTempConfig(t, `
+server:
+  port: 7575
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Server.Host != "127.0.0.1" || cfg.Server.Port != "127.0.0.1:18575" {
+		t.Fatalf("server = %#v, want environment localhost:18575", cfg.Server)
+	}
+}
+
 func TestLoadAcceptsLegacyVoWiFiGlobalKeys(t *testing.T) {
 	path := writeTempConfig(t, `
 vowifi:
