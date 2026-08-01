@@ -27,7 +27,7 @@ interface 4，也不使用 capture/seize 抢占已有 owner。
 - `devices.watch`、IOKit 热插拔通知、拔出后重连或 generation 事件；
 - PTY 的强制单客户端所有权；当前是 `cooperative_single_client`，同 UID 多开仍可能混帧；
 - 多客户端并发 accept、后台命令队列、租约超时和跨连接租约恢复；
-- 短信 `>` prompt、多阶段 payload、Ctrl-Z 结束符或二进制输入；
+- 除已支持的 `AT+CMGS` prompt/十六进制 PDU/Ctrl-Z 外的其他多阶段或二进制输入；
 - 面向生产的任意 AT 授权/审计、QMI、ECM 数据面或完整 Vohive Darwin backend；当前只验证了
   Vohive 使用的 Go 串口库和 PTY 的基本兼容性。
 
@@ -333,8 +333,8 @@ interface 2，事务结束立即关闭 USB transport；这样能够阻止同一�
 
 停止 PTY 时会唤醒并 join worker；如果 worker 已进入同步 USB handler，stop 必须等待当前
 transport 返回。命令读取有固定 deadline、响应上限也限制内存，但 interface open 和整个同步
-handler 没有独立的取消/stop deadline，因此目前不能承诺 SIGTERM 等待严格有界。没有短信 prompt
-状态机时，即使使用开发开关也不能用 `AT+CMGS` 安全发送正文。没有 `devices.watch`/热插拔恢复
+handler 没有独立的取消/stop deadline，因此目前不能承诺 SIGTERM 等待严格有界。`AT+CMGS`
+已有 prompt/PDU/Ctrl-Z 状态机和 ESC 恢复工具，但仍只能在显式开发开关下使用。没有 `devices.watch`/热插拔恢复
 时，固定 registry ID 只会让旧设备操作失败，不会自动发现新 generation 或重建 PTY。
 
 下一切片应按以下顺序推进：
@@ -343,7 +343,7 @@ handler 没有独立的取消/stop deadline，因此目前不能承诺 SIGTERM �
 2. 把 registry-pinned USB ownership 演进为可取消的常驻 transport，实现响应/URC 分流、订阅和
    断线 resync；
 3. 增加 IOKit watch、真实 generation、拔出取消和受控重连，继续保证替换设备 fail closed；
-4. 为短信 prompt、Ctrl-Z payload 和其他有状态 AT transaction 提供专用 API；
+4. 把已验证的短信 prompt/Ctrl-Z 事务从 PTY 过渡层下沉为带权限的正式 API；
 5. 把 `devices.list`/事件与串口路径接入 Vohive Darwin DeviceProvider，再开始 P2 ECM 门禁。
 
 本切片没有执行 `AT+QCFG="usbnet",1`，没有改变 `usbnet=0`，没有复位模块，也没有进行 ECM

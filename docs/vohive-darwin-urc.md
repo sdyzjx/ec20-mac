@@ -1,8 +1,8 @@
 # Vohive Darwin 连续 URC mock 注入与安全边界
 
 状态：`ec20d --mock --pty` 已能在命令响应之外注入一条主动上报记录；Vohive 的真实
-`modem.Manager` 已在 race detector 下收到 `+CPIN: READY` 并触发 SIM status callback。尚未覆盖
-`+CMTI` 短信读取、`+CUSD` 会话、`RING/+CLIP` 或短信 prompt/Ctrl-Z transaction。
+`modem.Manager` 已在 race detector 下收到 `+CPIN: READY` 并触发 SIM status callback。出站短信
+prompt/Ctrl-Z transaction 已另行完成；尚未覆盖 `+CMTI` 短信读取、`+CUSD` 会话和 `RING/+CLIP`。
 
 相关提交：`0414bab`。
 
@@ -75,5 +75,4 @@ ctest --test-dir build \
 1. `+CUSD`：发送 USSD 命令后注入响应，验证 waiter channel、取消和超时；
 2. `+CMTI`：提供 `AT+CMGR`/`AT+CMGD` fixture，验证存储区与短信入库；
 3. `RING/+CLIP/NO CARRIER`：验证来电 callback 状态机；
-4. `>` prompt + Ctrl-Z：扩展 PTY transaction，不再把所有输入都当 CR/LF 文本命令；
-5. 完成 deterministic mock 后，才在明确授权、单客户端条件下执行真实 Manager/URC 测试。
+4. 完成 deterministic mock 后，在明确授权、单客户端条件下执行真实入站 URC 测试。

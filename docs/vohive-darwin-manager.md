@@ -2,7 +2,7 @@
 
 状态：`modem.Manager` 已在 `ec20d --mock` PTY 上完成启动、初始化、AT 命令、停止和 lease 释放的
 race 检测；真实 EC20 上也已通过 Vohive HTTP API 启动 Worker/Manager，完成 SIM READY、
-运营商、信号、注册和 PS attach 验证。短信、USSD、来电和 IP 数据面仍未验收。
+运营商、信号、注册、PS attach 和出站 PDU SMS 验证。入站短信、USSD、来电和 IP 数据面仍未验收。
 
 实现提交：`7753554`（`fix(darwin): make modem port ownership fail closed`）。
 验证日期：2026-08-01。
@@ -76,8 +76,8 @@ CTest `ec20d-vohive-manager-integration` 执行：
 mock 对普通命令返回 echo + `OK`，并为 `ATI`、`AT+GMR`、`AT+CGSN`、`AT+CSQ`、`AT+CPIN?`、
 `AT+COPS?` 和只读 `usbnet` 查询提供确定性 EC20 风格 payload。这使完整 Web 流程可以验证 IMEI、
 信号和 AT 终端解析。新增的 mock-only IPC 还能在 Manager ready 后异步注入 URC，目前已证明
-`+CPIN: READY` 能穿过 PTY 连续 reader 并到达 SIM status callback；它仍不能证明真实 SIM、短信
-或通话已经工作。
+`+CPIN: READY` 能穿过 PTY 连续 reader 并到达 SIM status callback；真实出站 SMS 另由
+`/api/sms/send` 实机门禁验证，该 mock URC 本身仍不能证明入站短信或通话已经工作。
 
 运行：
 
@@ -107,5 +107,5 @@ echo、短信格式/通知和来电/UAC 上报设置，因此后续实机回归�
 已确认 Worker 健康启动、自动选网、LTE 漫游注册和 `AT+CGATT: 1`；实验证据见
 [真实 EC20 接入记录](experiment-vohive-real-2026-08-01.md)。
 
-接下来在已经成立的连续 reader/URC 注入门上分别验证 `+CMTI`、`+CUSD`、`RING/+CLIP` 和短信
-`>` prompt/Ctrl-Z transaction。一次 SIM 状态 URC 通过不能替代这些功能门禁。
+出站 `>` prompt/Ctrl-Z transaction 已自动和实机通过。接下来在已经成立的连续
+reader/URC 注入门上分别验证 `+CMTI`、`+CUSD` 和 `RING/+CLIP`。

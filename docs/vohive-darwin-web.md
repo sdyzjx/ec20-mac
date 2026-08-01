@@ -2,7 +2,8 @@
 
 状态：完整 Vohive Mach-O 已在 `ec20d --mock --pty` 上跑通嵌入式 Vue Web、认证 API、设备发现、
 添加 Worker、overview 身份收敛、AT 终端和删除。该证据证明当前 Darwin 控制面可以被 Vohive
-前端使用；它不代表真实 EC20、蜂窝数据、短信、USSD、通话或 VoWiFi 已完成。
+前端使用。后续实机门禁又通过同一 API 完成出站 SMS；蜂窝数据、入站短信、USSD、通话或
+VoWiFi 仍未完成。
 
 相关提交：
 
@@ -118,12 +119,12 @@ npm run build
 
 当前“前端可用”已包含 mock 完整回归与真实 EC20 AT 控制面，但仍不包含未验收的业务与数据面：
 
-- 真实 EC20 已运行 Vohive Worker/Manager，并验证身份、SIM、信号、运营商和注册；
-- 没有连续 USB reader、URC、短信 `>`/Ctrl-Z transaction、USSD 或来电流程；
+- 真实 EC20 已运行 Vohive Worker/Manager，并验证身份、SIM、信号、运营商、注册和出站 SMS；
+- 出站短信 `>`/Ctrl-Z transaction 已通过；没有实机连续 USB reader、入站 SMS URC、USSD 或来电流程；
 - `usbnet` 仍为 0，没有 ECM/MBIM/QMI session 或 `enX` 数据出口；
 - 代理、流量、VoWiFi 与通话功能没有 Darwin 实机证据；
 - 仍是 ad-hoc Mach-O，不是 `.app`，没有 launchd、Developer ID、公证或 DriverKit entitlement。
 
-连续 URC 的 mock-only 注入门已在后续提交建立并通过 `+CPIN: READY` callback；下一切片继续覆盖
-SMS/USSD/来电 transaction，再在明确授权下运行真实 Manager。网络能力仍优先验证 ECM，失败后再
+连续 URC 的 mock-only 注入门已通过 `+CPIN: READY` callback，出站 SMS transaction 也已通过。
+下一切片继续覆盖入站 SMS/USSD/来电 transaction。网络能力仍优先验证 ECM，失败后再
 进入 QMI/NetworkingDriverKit 数据面。

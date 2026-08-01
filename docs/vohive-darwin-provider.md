@@ -1,8 +1,8 @@
 # Vohive Darwin HardwareProvider 与设备池接入
 
 状态：P3 bring-up 已接入 Vohive `CompatibleModem`、`Pool`、设备发现 API 和 Darwin 主程序工厂；
-Worker/Manager 已完成实机 AT 控制面、SIM 和 LTE 注册验证，短信/USSD/来电等完整业务 URC
-与蜂窝 IP 数据面仍未完成。
+Worker/Manager 已完成实机 AT 控制面、SIM、LTE 注册和出站 PDU SMS 验证，入站短信/
+USSD/来电等完整业务 URC 与蜂窝 IP 数据面仍未完成。
 
 实现提交：
 
@@ -203,19 +203,19 @@ SOCKET_PATH="$SOCKET_DIR/ec20d.sock"
 - 没有打开 PTY，没有发送 AT，没有触碰 interface 4，也没有改变 `usbnet=0`。
 
 后续实机门禁已执行 `?with_imei=1`、`AddWorkerFromConfig` 和完整 Vohive HTTP 服务，
-并验证 LTE 注册与 PS attach。这仍不能推导短信、通话、IP 数据或热插拔已经可用；
+并验证 LTE 注册、PS attach 和 Vohive API 出站 SMS。这仍不能推导入站短信、通话、IP 数据或热插拔已经可用；
 详见[真实 EC20 接入记录](experiment-vohive-real-2026-08-01.md)。
 
 ## 7. 尚未完成
 
 - Darwin Manager 的跨进程单实例 lease，以及实机停止/重启/异常恢复；
-- 连续 USB reader、URC、来电、入短信、USSD、短信 prompt/Ctrl-Z transaction；
+- 连续真实 USB reader、来电、入站短信与 USSD URC；
 - daemon restart/拔插 watcher 与不中断恢复；
 - ECM/MBIM controller、地址/DNS/路由观察与端到端代理出口；
 - interface 4 的 QMI transport、Raw-IP/Ethernet 数据面和 `NetworkingDriverKit`；
 - CoreAudio 语音路径及 VoWiFi/IPsec 的真实 Darwin 实现；
 - 更细的 SMS/USSD/eSIM/网络 capability 门禁、Host App、launchd、签名、公证与 DriverKit entitlement。
 
-下一步应为连续 reader、URC 与短信 transaction 建立 deterministic mock，再在明确授权的实机
-门禁下做 Manager 测试。真实 Manager 初始化会发送易恢复但会改变会话状态的 AT 配置，具体安全
-边界见 [Darwin Manager 文档](vohive-darwin-manager.md)。
+下一步应为入站短信、USSD 和来电建立 deterministic URC mock，再在明确授权的实机门禁下
+验收。真实 Manager 初始化会发送易恢复但会改变会话状态的 AT 配置，具体安全边界见
+[Darwin Manager 文档](vohive-darwin-manager.md)。

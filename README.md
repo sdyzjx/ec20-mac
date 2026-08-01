@@ -10,9 +10,11 @@ Vohive 使用的 `go.bug.st/serial` v1.6.4 已通过 mock 和 EC20 实机 `AT` �
 现已接入 `CompatibleModem`、`Pool`、`/api/devices/discovered` 和 Darwin 后端入口，并在实机
 完成 metadata-only Pool 发现。完整 Vohive 后端可构建为 arm64/amd64 Mach-O，但它仍不是可安装
 的 `.app`/DriverKit 驱动。`modem.Manager` 已在合成 PTY 上通过 race 检测的完整生命周期，Darwin
-不会再使用 `fuser`/kill 抢占端口。完整嵌入式 Web 已在 mock EC20 上跑通登录、发现、添加、状态
-收敛、AT 终端和删除流程，前端能明确显示 `AT / PTY` 与“仅 AT 控制面”。Manager 实机、完整业务 URC、
-短信/通话和 ECM/QMI 数据面尚未完成，也没有修改模块当前的 `usbnet=0`。
+不会再使用 `fuser`/kill 抢占端口。完整嵌入式 Web 已跑通登录、发现、添加、状态收敛、AT 终端
+和删除流程，前端能明确显示 `AT / PTY` 与“仅 AT 控制面”。真实 EC20 Manager 已完成
+SIM、LTE 漫游注册和 Vohive API 出站 PDU SMS 验收；PTY 桥能处理 `AT+CMGS` prompt、十六进制
+PDU、Ctrl-Z 和最长 120 秒的网络响应。入站短信、USSD、通话以及 ECM/QMI 数据面仍未完成，
+模块当前仍为 `usbnet=0`。
 
 设计与实施文档：
 
@@ -29,6 +31,7 @@ Vohive 使用的 `go.bug.st/serial` v1.6.4 已通过 mock 和 EC20 实机 `AT` �
 - [Vohive Darwin Manager 串口所有权与 mock 生命周期](docs/vohive-darwin-manager.md)
 - [Vohive Darwin Web 端到端运行与前端能力呈现](docs/vohive-darwin-web.md)
 - [Vohive Darwin 连续 URC mock 注入与安全边界](docs/vohive-darwin-urc.md)
+- [Vohive Darwin 出站 SMS 事务与实机验收](docs/vohive-darwin-sms.md)
 
 ## 当前阶段：用户态 AT、PTY 与 Vohive Darwin Provider
 
@@ -127,9 +130,17 @@ SOCKET_PATH="${TMPDIR:-/tmp}/ec20d-live.sock"
 ./build/ec20ctl --socket "$SOCKET_PATH" list
 ```
 
-PTY 只提供当前的命令—响应字节流，不会被 `GetPortsList` 自动枚举，也没有连续 USB reader；
-实时 URC、短信 prompt、热插拔恢复和多客户端隔离仍属于后续切片。停止 `ec20d` 会移除 PTY，
-Vohive 不得持久化该动态路径。
+PTY 不会被 `GetPortsList` 自动枚举，也没有连续 USB reader。它已经为 `AT+CMGS=<length>` 提供
+有界的 prompt/PDU/Ctrl-Z 专用事务，足以让 Vohive 发送 PDU SMS；实时入站 URC、热插拔恢复和
+多客户端强制隔离仍属于后续切片。停止 `ec20d` 会移除 PTY，Vohive 不得持久化该动态路径。
+
+如果一次交互式实验在 prompt 后被外部进程中止，可先停止所有串口客户端，再执行恢复命令；
+它只向 interface 2 发送 ESC，随后仍必须用普通 `AT` 收到 `OK` 才能确认恢复：
+
+```sh
+./build/ec20-at-probe --recover-interactive
+./build/ec20-at-probe --command AT
+```
 
 每条命令发送前先读取到 150 ms 的静默边界，陈旧数据以 `STALE` 标记；随后同时打印响应的
 原始十六进制数据和解码文本。成功必须收到独立的 `OK` 行；`ERROR`、`+CME ERROR:`、
