@@ -31,6 +31,7 @@ USSD 在当前漫游网络返回超时，来电、代理公网出口和产品化
 - [Vohive Darwin 后端构建与依赖](docs/vohive-darwin-build.md)
 - [Vohive Darwin Manager 串口所有权与 mock 生命周期](docs/vohive-darwin-manager.md)
 - [Vohive Darwin Web 端到端运行与前端能力呈现](docs/vohive-darwin-web.md)
+- [Vohive Darwin 浏览器直连启动](docs/vohive-darwin-web-run.md)
 - [Vohive Darwin 连续 URC mock 注入与安全边界](docs/vohive-darwin-urc.md)
 - [Vohive Darwin 出站 SMS 事务与实机验收](docs/vohive-darwin-sms.md)
 
@@ -98,6 +99,9 @@ ctest --test-dir build --output-on-failure
 输出是没有 Developer ID 签名的 bring-up Mach-O（linker 会应用 ad-hoc signature），不是可分发
 `.app`。前端依赖审计、许可证、签名和打包限制见
 [Darwin 构建说明](docs/vohive-darwin-build.md)。
+
+前端直接由 Vohive 内嵌并通过浏览器访问，不需要打包原生 `.app`。受控启动和 loopback 监听方式见
+[浏览器直连运行说明](docs/vohive-darwin-web-run.md)。
 
 ## 运行
 

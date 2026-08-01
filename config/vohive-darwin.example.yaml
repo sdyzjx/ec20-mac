@@ -1,0 +1,29 @@
+server:
+  debug: false
+  host: 127.0.0.1
+  port: 17575
+
+web:
+  username: admin
+  password: CHANGE_ME_BEFORE_START
+
+# 首次启动保持为空；从网页“设备管理 → 重新扫描/添加设备”绑定真实 EC20。
+# 动态 /dev/ttys*、enX、attachment key 和 USB registry identity 不得写入此文件。
+devices: []
+
+telegram:
+  enabled: false
+feishu:
+  enabled: false
+qq:
+  enabled: false
+webhook:
+  enabled: false
+bark:
+  enabled: false
+email:
+  enabled: false
+pushplus:
+  enabled: false
+vowifi:
+  enabled: false
