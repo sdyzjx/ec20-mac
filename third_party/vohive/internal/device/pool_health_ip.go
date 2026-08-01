@@ -488,6 +488,22 @@ func ipHealthy(v4, v6 string) bool {
 	return strings.TrimSpace(v4) != "" || strings.TrimSpace(v6) != ""
 }
 
+// publicIPHealthyForVersion requires the address families requested by the
+// active card policy. A partial dual-stack result is still cached and shown,
+// but background retries continue until the requested family is available.
+func publicIPHealthyForVersion(v4, v6, ipVersion string) bool {
+	v4Ready := strings.TrimSpace(v4) != ""
+	v6Ready := strings.TrimSpace(v6) != ""
+	switch strings.ToLower(strings.TrimSpace(ipVersion)) {
+	case "v6":
+		return v6Ready
+	case "v4v6":
+		return v4Ready && v6Ready
+	default:
+		return v4Ready
+	}
+}
+
 // representativeIP 在仍需要单个字符串代表"当前公网 IP"的调用点（如 RotateWithNotify 的
 // 新旧 IP 对比/返回值）使用：双栈下优先取 v4，仅有 v6 时退化为 v6。
 func representativeIP(publicV4, publicV6 string) string {
@@ -548,14 +564,6 @@ func (p *Pool) refreshIPs(worker *Worker, checkPublic bool) {
 			worker.cacheMu.Unlock()
 
 			if ipHealthy(publicV4, publicV6) {
-				worker.publicIPRetryMu.Lock()
-				worker.publicIPRetryCount = 0
-				if worker.publicIPRetryTimer != nil {
-					worker.publicIPRetryTimer.Stop()
-					worker.publicIPRetryTimer = nil
-				}
-				worker.publicIPRetryMu.Unlock()
-
 				if oldIP == "" && oldIPv6 == "" {
 					logger.Info(fmt.Sprintf("[%s] 获取到公网 IP", worker.ID), "public_ip", publicV4, "public_ipv6", publicV6, "private_ip", privateIP, "private_ipv6", privateIPv6)
 				} else if (publicV4 != "" && publicV4 != oldIP) || (publicV6 != "" && publicV6 != oldIPv6) {
@@ -581,6 +589,16 @@ func (p *Pool) refreshIPs(worker *Worker, checkPublic bool) {
 				if imei := worker.getIMEI(); imei != "" {
 					_ = db.UpdateDeviceIPsV6(imei, publicV4, publicV6, privateIP, privateIPv6)
 				}
+			}
+
+			if publicIPHealthyForVersion(publicV4, publicV6, worker.Config.IPVersion) {
+				worker.publicIPRetryMu.Lock()
+				worker.publicIPRetryCount = 0
+				if worker.publicIPRetryTimer != nil {
+					worker.publicIPRetryTimer.Stop()
+					worker.publicIPRetryTimer = nil
+				}
+				worker.publicIPRetryMu.Unlock()
 			} else {
 				p.schedulePublicIPRetry(worker)
 			}
@@ -626,5 +644,5 @@ func (p *Pool) schedulePublicIPRetry(worker *Worker) {
 		p.refreshIPs(worker, true)
 	})
 
-	logger.Info(fmt.Sprintf("[%s] 未获取到公网 IP，稍后重试", worker.ID), "attempt", attempt, "next_retry_in", delay.String())
+	logger.Info(fmt.Sprintf("[%s] 目标公网 IP 尚未完整获取，稍后重试", worker.ID), "ip_version", worker.Config.IPVersion, "attempt", attempt, "next_retry_in", delay.String())
 }
