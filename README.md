@@ -11,7 +11,7 @@ Vohive 使用的 `go.bug.st/serial` v1.6.4 已通过 mock 和 EC20 实机 `AT` �
 完成 metadata-only Pool 发现。完整 Vohive 后端可构建为 arm64/amd64 Mach-O，但它仍不是可安装
 的 `.app`/DriverKit 驱动。`modem.Manager` 已在合成 PTY 上通过 race 检测的完整生命周期，Darwin
 不会再使用 `fuser`/kill 抢占端口。完整嵌入式 Web 已在 mock EC20 上跑通登录、发现、添加、状态
-收敛、AT 终端和删除流程，前端能明确显示 `AT / PTY` 与“仅 AT 控制面”。Manager 实机、连续 URC、
+收敛、AT 终端和删除流程，前端能明确显示 `AT / PTY` 与“仅 AT 控制面”。Manager 实机、完整业务 URC、
 短信/通话和 ECM/QMI 数据面尚未完成，也没有修改模块当前的 `usbnet=0`。
 
 设计与实施文档：
@@ -27,6 +27,7 @@ Vohive 使用的 `go.bug.st/serial` v1.6.4 已通过 mock 和 EC20 实机 `AT` �
 - [Vohive Darwin 后端构建与依赖](docs/vohive-darwin-build.md)
 - [Vohive Darwin Manager 串口所有权与 mock 生命周期](docs/vohive-darwin-manager.md)
 - [Vohive Darwin Web 端到端运行与前端能力呈现](docs/vohive-darwin-web.md)
+- [Vohive Darwin 连续 URC mock 注入与安全边界](docs/vohive-darwin-urc.md)
 
 ## 当前阶段：用户态 AT、PTY 与 Vohive Darwin Provider
 

@@ -61,11 +61,12 @@ CTest `ec20d-vohive-manager-integration` 执行：
 2. 通过 `ec20ctl devices.list` 取得唯一 owner-only `/dev/ttys*`；
 3. 用真实 `go.bug.st/serial` 和真实 `modem.Manager` 打开该 PTY；
 4. 等待 Manager init ready；
-5. 执行额外 `AT`，验证命令/响应 loop；
-6. 验证运行中 `ProbeIMEI` 被 Manager lease 拒绝；
-7. `StopAndWait` join read/run/cleanup loops；
-8. 用 `SerialAT` 重新打开同一 PTY并收到 `OK`，证明 lease 已释放；
-9. 停止 daemon，确认 socket 和 PTY 都清理。
+5. 通过 `ec20ctl mock-urc` 注入 `+CPIN: READY`，验证连续 reader 和 SIM callback；
+6. 执行额外 `AT`，验证异步 URC 后命令/响应 loop 仍保持同步；
+7. 验证运行中 `ProbeIMEI` 被 Manager lease 拒绝；
+8. `StopAndWait` join read/run/cleanup loops；
+9. 用 `SerialAT` 重新打开同一 PTY并收到 `OK`，证明 lease 已释放；
+10. 停止 daemon，确认 socket 和 PTY 都清理。
 
 `--allow-arbitrary-at` 只用于 `--mock` 进程。Manager 初始化会发送 `ATE0`、`AT+CMGF=0`、
 `AT+CNMI=...`、`AT+CLIP=1`、`AT+QPCMV=1,2`，默认 ec20d 只读 allowlist 会拒绝这些命令；mock
@@ -73,7 +74,9 @@ CTest `ec20d-vohive-manager-integration` 执行：
 
 mock 对普通命令返回 echo + `OK`，并为 `ATI`、`AT+GMR`、`AT+CGSN`、`AT+CSQ`、`AT+CPIN?`、
 `AT+COPS?` 和只读 `usbnet` 查询提供确定性 EC20 风格 payload。这使完整 Web 流程可以验证 IMEI、
-信号和 AT 终端解析；它仍不能证明真实 SIM、短信、连续 URC 或通话已经工作。
+信号和 AT 终端解析。新增的 mock-only IPC 还能在 Manager ready 后异步注入 URC，目前已证明
+`+CPIN: READY` 能穿过 PTY 连续 reader 并到达 SIM status callback；它仍不能证明真实 SIM、短信
+或通话已经工作。
 
 运行：
 
@@ -100,5 +103,5 @@ SIGTERM daemon，避免
 4. 先限定单设备、只读查询和可控停止；
 5. 记录每条命令、响应、退出和 PTY 清理结果。
 
-接下来优先实现连续 reader/URC 的 deterministic mock 测试，再分别验证 `+CMTI`、`+CUSD`、
-`RING/+CLIP` 和短信 `>` prompt/Ctrl-Z transaction。一次 Manager `AT` 通过不能替代这些功能门禁。
+接下来在已经成立的连续 reader/URC 注入门上分别验证 `+CMTI`、`+CUSD`、`RING/+CLIP` 和短信
+`>` prompt/Ctrl-Z transaction。一次 SIM 状态 URC 通过不能替代这些功能门禁。

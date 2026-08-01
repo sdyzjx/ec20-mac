@@ -116,12 +116,13 @@ mock 设备使用固定的 `instance_id` `usb-03120000-1`。普通命令返回 e
 `AT+CPIN?` 为 `READY`。这些 fixture 用于验证 Vohive 的解析和 UI 流程，不能作为 USB 实机证据。
 
 PTY mock 模式会在 `devices.list` 的 `at.path` 发布动态路径，并把 AT RPC capability 切换为
-`at.pty`：
+`at.pty`。仅当同时启用 `--mock --pty` 时还会发布测试 capability `mock.urc.inject`：
 
 ```sh
 SOCKET_PATH="${TMPDIR:-/tmp}/ec20d-pty-demo.sock"
 ./build/ec20d --mock --pty --socket "$SOCKET_PATH"
 ./build/ec20ctl --socket "$SOCKET_PATH" list
+./build/ec20ctl --socket "$SOCKET_PATH" mock-urc '+CPIN: READY'
 ```
 
 从输出取得 `/dev/ttys*` 后，可以运行 Objective-C smoke，或运行与 Vohive 相同串口库的 Go
@@ -246,6 +247,7 @@ major 会返回 `unsupported_api`。
 | `at.acquire` | `instance_id`、`generation` | 在当前 IPC 连接取得 interface 2 独占租约 |
 | `at.execute` | 设备、generation、lease、命令和上限 | 在租约内执行一条 policy 允许的 AT 命令 |
 | `at.release` | 设备、generation、lease | 关闭 USB transport 并释放租约 |
+| `mock.urc.inject` | `line` | 仅 `--mock --pty` 可用，向 PTY 注入一条主动上报测试记录 |
 
 租约绑定创建它的 IPC 连接；连接断开时自动释放。当前服务一次只处理一个连接，因此已经保证
 USB 命令不交错，但其他客户端要等待当前连接结束。后续仍需并发 accept、显式排队、租约超时和
@@ -255,6 +257,10 @@ URC event；Vohive 不应把目前的串行 server 行为固化为长期 ABI。
 `at.path` 和 `cooperative_single_client`；同一 daemon 的 RPC `at.acquire` 会返回 busy，避免
 RPC 和 PTY 两条上层通道同时控制 modem。PTY worker 只负责 CR/LF 命令 framing 和串行调用
 handler，无法识别两个同时打开 slave 的本地进程，所以上述 busy 规则不能解决 PTY 多开混帧。
+
+`mock.urc.inject` 严格拒绝真实模式和无 PTY 模式，只接受 1–1024 字节可打印 ASCII，并由 bridge
+统一添加 CR/LF。它不会被真实 daemon 的 capability 宣告；即使客户端直接请求，真实模式也返回
+`permission_denied`，不会写入 USB。详细测试边界见 [Darwin URC 文档](vohive-darwin-urc.md)。
 
 ## 6. 默认只读 AT 策略
 

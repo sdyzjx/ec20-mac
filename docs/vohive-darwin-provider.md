@@ -1,7 +1,7 @@
 # Vohive Darwin HardwareProvider 与设备池接入
 
 状态：P3 bring-up 已接入 Vohive `CompatibleModem`、`Pool`、设备发现 API 和 Darwin 主程序工厂；
-尚未完成 Worker/Manager 实机运行、连续 URC、短信/通话或蜂窝数据面。
+尚未完成 Worker/Manager 实机运行、短信/USSD/来电等完整业务 URC 或蜂窝数据面。
 
 实现提交：
 

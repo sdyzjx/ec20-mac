@@ -201,6 +201,7 @@ Vohive 通过 Darwin 平台后端使用它们。
   进程内串口 lease；
 - 已在 mock EC20 上跑通完整嵌入式 Web 的登录、发现、添加、overview 身份收敛、AT 终端与删除，
   UI 对 AT-only 设备明确禁用网络能力语义；
+- 已建立真实串口字节路径上的 mock-only URC 注入，并验证 `+CPIN: READY` 到达 Manager callback；
 - 尚未通过本节要求的真实短信/USSD/热插拔和 ECM 出口验收，因此 P3 仍为进行中，不能打
   `p3-vohive-darwin-mvp` 标签。
 

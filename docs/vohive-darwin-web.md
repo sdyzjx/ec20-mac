@@ -124,5 +124,6 @@ npm run build
 - 代理、流量、VoWiFi 与通话功能没有 Darwin 实机证据；
 - 仍是 ad-hoc Mach-O，不是 `.app`，没有 launchd、Developer ID、公证或 DriverKit entitlement。
 
-下一切片应先建立连续 URC/SMS/USSD 的 deterministic mock，再在明确授权下运行真实 Manager；网络
-能力则继续优先验证 ECM，失败后再进入 QMI/NetworkingDriverKit 数据面。
+连续 URC 的 mock-only 注入门已在后续提交建立并通过 `+CPIN: READY` callback；下一切片继续覆盖
+SMS/USSD/来电 transaction，再在明确授权下运行真实 Manager。网络能力仍优先验证 ECM，失败后再
+进入 QMI/NetworkingDriverKit 数据面。
