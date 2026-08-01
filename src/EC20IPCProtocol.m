@@ -10,7 +10,9 @@ NSString * const EC20IPCRequestIDErrorKey = @"EC20IPCRequestID";
 
 NSString * const EC20IPCMethodSystemHello = @"system.hello";
 NSString * const EC20IPCMethodDevicesList = @"devices.list";
+NSString * const EC20IPCMethodATAcquire = @"at.acquire";
 NSString * const EC20IPCMethodATExecute = @"at.execute";
+NSString * const EC20IPCMethodATRelease = @"at.release";
 
 NSString * const EC20IPCErrorCodeInvalidRequest = @"invalid_request";
 NSString * const EC20IPCErrorCodeUnsupportedAPI = @"unsupported_api";

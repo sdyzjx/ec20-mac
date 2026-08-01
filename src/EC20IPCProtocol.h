@@ -18,7 +18,9 @@ FOUNDATION_EXPORT NSString * const EC20IPCRequestIDErrorKey;
 /// Methods implemented by the first ec20d/Vohive protocol surface.
 FOUNDATION_EXPORT NSString * const EC20IPCMethodSystemHello;
 FOUNDATION_EXPORT NSString * const EC20IPCMethodDevicesList;
+FOUNDATION_EXPORT NSString * const EC20IPCMethodATAcquire;
 FOUNDATION_EXPORT NSString * const EC20IPCMethodATExecute;
+FOUNDATION_EXPORT NSString * const EC20IPCMethodATRelease;
 
 /// Stable error codes used in the wire-level `error.code` field.
 FOUNDATION_EXPORT NSString * const EC20IPCErrorCodeInvalidRequest;

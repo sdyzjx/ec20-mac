@@ -63,6 +63,39 @@ target_link_libraries(ec20-at-probe PRIVATE
     ec20-usb-at
 )
 
+add_executable(ec20d
+    src/ec20d.m
+)
+
+target_compile_options(ec20d PRIVATE
+    -fobjc-arc
+    -fblocks
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
+target_link_libraries(ec20d PRIVATE
+    ec20-ipc
+    ec20-usb-at
+)
+
+add_executable(ec20ctl
+    src/ec20ctl.m
+)
+
+target_compile_options(ec20ctl PRIVATE
+    -fobjc-arc
+    -fblocks
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
+target_link_libraries(ec20ctl PRIVATE
+    ec20-ipc
+)
+
 add_executable(ec20-ipc-protocol-tests
     tests/ec20_ipc_protocol_tests.m
 )
@@ -82,3 +115,13 @@ target_link_libraries(ec20-ipc-protocol-tests PRIVATE
 enable_testing()
 add_test(NAME ec20-at-probe-self-test COMMAND ec20-at-probe --self-test)
 add_test(NAME ec20-ipc-protocol-self-test COMMAND ec20-ipc-protocol-tests)
+add_test(NAME ec20d-self-test COMMAND ec20d --self-test)
+add_test(NAME ec20ctl-self-test COMMAND ec20ctl --self-test)
+add_test(
+    NAME ec20d-mock-integration
+    COMMAND "${CMAKE_COMMAND}" -E env
+        "EC20D_BIN=$<TARGET_FILE:ec20d>"
+        "EC20CTL_BIN=$<TARGET_FILE:ec20ctl>"
+        /bin/sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/ec20d_mock_integration.sh"
+)
+set_tests_properties(ec20d-mock-integration PROPERTIES TIMEOUT 20)
