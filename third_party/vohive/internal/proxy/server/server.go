@@ -92,6 +92,7 @@ func normalizeMode(mode string) string {
 
 func newSocks5Server(dialer *net.Dialer, stats *TrafficStats, authEnabled bool, username, password string) (*socks5.Server, error) {
 	opts := []socks5.Option{
+		socks5.WithResolver(newBoundDNSResolver(dialer, defaultProxyDNSServers)),
 		socks5.WithDial(func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return dialOutboundConn(ctx, dialer, stats, network, addr)
 		}),

@@ -16,6 +16,8 @@ xcuserdata/
 *.pid
 *.sock
 /data/
+/config/vohive-darwin.local.yaml
+/config/com.doosam.ec20-vohive.plist
 
 # Browser automation snapshots
 .playwright-cli/
